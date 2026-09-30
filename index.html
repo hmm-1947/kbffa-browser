@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KBFFA</title>
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="hud"></div>
+  <div id="menu">
+    <img class="logo" src="/textures/gui/logo.png" alt="KBFFA">
+    <div class="server-title">Multiplayer</div>
+    <div id="serverList" class="server-list"></div>
+    <div id="joinPanel" class="join-panel">
+      <label for="playerName">Player name</label>
+      <input id="playerName" maxlength="16" autocomplete="username" placeholder="Letters, numbers, _">
+      <button id="joinServer" type="button">Join server</button>
+      <div id="joinError" class="join-error"></div>
+    </div>
+    <button id="statsButton" type="button">My statistics</button>
+    <pre id="lobbyStats" class="lobby-stats"></pre>
+  </div>
+  <div id="pauseBlur"></div>
+  <div id="pause" class="mc-screen">
+    <div class="mc-title">Game menu</div>
+    <div class="mc-buttons">
+      <button id="btnResume" class="mc-btn">Back to game</button>
+      <button id="btnOptions" class="mc-btn">Options...</button>
+    </div>
+  </div>
+  <div id="options" class="mc-screen">
+    <div class="mc-title">Options</div>
+    <div class="mc-row">
+      <span class="mc-label">Sprint</span>
+      <button id="btnToggleSprint" class="mc-btn mc-wide"></button>
+    </div>
+    <div class="mc-row">
+      <span class="mc-label">Mouse Sensitivity</span>
+      <div class="mc-slider" id="sldSens"><div class="mc-slider-fill"></div><div class="mc-slider-label"></div></div>
+    </div>
+    <div class="mc-row">
+      <span class="mc-label">FOV</span>
+      <div class="mc-slider" id="sldFov"><div class="mc-slider-fill"></div><div class="mc-slider-label"></div></div>
+    </div>
+    <div class="mc-buttons">
+      <button id="btnControls" class="mc-btn">Controls...</button>
+      <button id="btnResetSettings" class="mc-btn">Reset to Default</button>
+      <button id="btnOptionsDone" class="mc-btn">Done</button>
+    </div>
+  </div>
+  <div id="controls" class="mc-screen">
+    <div class="mc-title">Controls</div>
+    <div class="mc-controls-list" id="controlsList"></div>
+    <div class="mc-buttons">
+      <button id="btnControlsDone" class="mc-btn">Done</button>
+    </div>
+  </div>
+  <div id="chatWrap">
+    <div id="chatLog"></div>
+    <input id="chatInput" type="text" maxlength="100" autocomplete="off" placeholder="/bot on">
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

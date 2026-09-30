@@ -1,0 +1,33 @@
+export const CONFIG = {
+  TPS: 20,
+  WORLD: { sx: 96, sy: 160, sz: 96, ox: 48, oz: 48 },
+  JUMP_VY: 0.42,
+  REACH_ATTACK: 3.0,
+  REACH_BLOCK: 5.0,
+  KB_LEVEL: 5,
+  HURT_RESISTANT: 20,
+  VOID_Y: -48,
+  RESPAWN_TICKS: 10,
+  KILL_CREDIT_TICKS: 200,
+  BLOCK_LIFETIME: 200,
+  PLATE_LIFETIME: 200,
+  PLATE_LAUNCH_VY: 2.0,
+  BUILD_MAX_Y: 110,
+  START_PEARLS: 1,
+  PEARL_PER_KILL: 1,
+  START_ARROWS: 64,
+  INFINITE_ARROWS: true,
+  ARROW_STAY_TICKS: 40,
+  BOTS: 0,
+  PLACE_BLOCK: 'sandstone',
+  PROTECT_MAP_BLOCKS: true,
+  FOV: 70,
+  MOUSE_SENS: 0.15,
+  HOTBAR: [
+    { type: 'stick', item: 'stick' },
+    { type: 'bow', item: 'bow_standby' },
+    { type: 'block', block: 'sandstone' },
+    { type: 'pearl', item: 'ender_pearl' },
+    { type: 'plate', item: 'gold_pressure_plate' }
+  ]
+}
