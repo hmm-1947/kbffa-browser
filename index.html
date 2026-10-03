@@ -27,6 +27,9 @@
     <div class="mc-title">Game menu</div>
     <div class="mc-buttons">
       <button id="btnResume" class="mc-btn">Back to game</button>
+      <button id="btnBackToServerList" class="mc-btn">Back to server list</button>
+      <button id="btnStats" class="mc-btn">Statistics</button>
+      <button id="btnControls" class="mc-btn">Controls...</button>
       <button id="btnOptions" class="mc-btn">Options...</button>
     </div>
   </div>
@@ -44,8 +47,16 @@
       <span class="mc-label">FOV</span>
       <div class="mc-slider" id="sldFov"><div class="mc-slider-fill"></div><div class="mc-slider-label"></div></div>
     </div>
+    <div class="mc-row">
+      <span class="mc-label">GUI Scale</span>
+      <button id="btnGuiScale" class="mc-btn mc-wide"></button>
+    </div>
+    <div class="mc-row">
+      <span class="mc-label">Master Volume</span>
+      <div class="mc-slider" id="sldVolume"><div class="mc-slider-fill"></div><div class="mc-slider-label"></div></div>
+    </div>
     <div class="mc-buttons">
-      <button id="btnControls" class="mc-btn">Controls...</button>
+      <button id="btnChatSettingsOpen" class="mc-btn">Chat Settings...</button>
       <button id="btnResetSettings" class="mc-btn">Reset to Default</button>
       <button id="btnOptionsDone" class="mc-btn">Done</button>
     </div>
@@ -55,6 +66,50 @@
     <div class="mc-controls-list" id="controlsList"></div>
     <div class="mc-buttons">
       <button id="btnControlsDone" class="mc-btn">Done</button>
+    </div>
+  </div>
+  <div id="stats" class="mc-screen mc-screen-wide">
+    <div class="mc-title">Statistics</div>
+    <div class="mc-buttons mc-buttons-row mc-stats-tabs">
+      <button id="btnStatsOnline" class="mc-btn">Online</button>
+      <button id="btnStatsOffline" class="mc-btn">Offline</button>
+      <button id="btnStatsAll" class="mc-btn">All</button>
+    </div>
+    <div class="mc-row">
+      <span class="mc-label">Sort by</span>
+      <button id="btnStatsSort" class="mc-btn mc-wide">Kills</button>
+    </div>
+    <div class="mc-stats-header">
+      <span class="mc-stats-col-name">Name</span>
+      <span class="mc-stats-col">Kills</span>
+      <span class="mc-stats-col">Deaths</span>
+      <span class="mc-stats-col">Streak</span>
+      <span class="mc-stats-col">Pearls</span>
+      <span class="mc-stats-col">Blocks</span>
+    </div>
+    <div class="mc-stats-list" id="statsList"></div>
+    <div class="mc-buttons">
+      <button id="btnStatsDone" class="mc-btn">Done</button>
+    </div>
+  </div>
+  <div id="chatSettings" class="mc-screen">
+    <div class="mc-title">Chat Settings</div>
+    <div class="mc-buttons mc-buttons-row mc-chatpos-tabs">
+      <button id="btnChatTL" class="mc-btn">Top Left</button>
+      <button id="btnChatTR" class="mc-btn">Top Right</button>
+      <button id="btnChatBL" class="mc-btn">Bottom Left</button>
+      <button id="btnChatBR" class="mc-btn">Bottom Right</button>
+    </div>
+    <div class="mc-row">
+      <span class="mc-label">Chat Length</span>
+      <div class="mc-slider" id="sldChatLen"><div class="mc-slider-fill"></div><div class="mc-slider-label"></div></div>
+    </div>
+    <div class="mc-row">
+      <span class="mc-label">Chat Opacity</span>
+      <div class="mc-slider" id="sldChatOpacity"><div class="mc-slider-fill"></div><div class="mc-slider-label"></div></div>
+    </div>
+    <div class="mc-buttons">
+      <button id="btnChatSettingsDone" class="mc-btn">Done</button>
     </div>
   </div>
   <div id="chatWrap">

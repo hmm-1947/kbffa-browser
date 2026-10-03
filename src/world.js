@@ -22,7 +22,11 @@ export class World {
 
   set(x, y, z, id) {
     if (!this.inBounds(x, y, z)) return false
-    this.data[(y * this.sz + (z + this.oz)) * this.sx + (x + this.ox)] = id
+    const i = (y * this.sz + (z + this.oz)) * this.sx + (x + this.ox)
+    // Re-setting the same id must not dirty chunks: each dirty chunk is fully
+    // re-meshed, which caused frame hitches when snapshots re-confirmed blocks.
+    if (this.data[i] === id) return true
+    this.data[i] = id
     this.mark(x, y, z)
     return true
   }

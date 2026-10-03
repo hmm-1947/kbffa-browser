@@ -1,0 +1,66 @@
+{
+  "testbow": {
+    "kills": 0,
+    "deaths": 0,
+    "maxKillStreak": 0,
+    "deathStreak": 0,
+    "pearlsThrown": 0,
+    "blocksPlaced": 0
+  },
+  "test": {
+    "kills": 2,
+    "deaths": 7,
+    "maxKillStreak": 1,
+    "deathStreak": 0,
+    "pearlsThrown": 10,
+    "blocksPlaced": 1210
+  },
+  "test2": {
+    "kills": 1,
+    "deaths": 1,
+    "maxKillStreak": 1,
+    "deathStreak": 1,
+    "pearlsThrown": 0,
+    "blocksPlaced": 0
+  },
+  "josh": {
+    "kills": 0,
+    "deaths": 0,
+    "maxKillStreak": 0,
+    "deathStreak": 0,
+    "pearlsThrown": 0,
+    "blocksPlaced": 0
+  },
+  "testtest": {
+    "kills": 0,
+    "deaths": 0,
+    "maxKillStreak": 0,
+    "deathStreak": 0,
+    "pearlsThrown": 1,
+    "blocksPlaced": 93
+  },
+  "testbot": {
+    "kills": 0,
+    "deaths": 0,
+    "maxKillStreak": 0,
+    "deathStreak": 0,
+    "pearlsThrown": 0,
+    "blocksPlaced": 0
+  },
+  "gvrsfgvd": {
+    "kills": 5,
+    "deaths": 2,
+    "maxKillStreak": 3,
+    "deathStreak": 0,
+    "pearlsThrown": 0,
+    "blocksPlaced": 0
+  },
+  "tet": {
+    "kills": 1,
+    "deaths": 0,
+    "maxKillStreak": 1,
+    "deathStreak": 0,
+    "pearlsThrown": 0,
+    "blocksPlaced": 0
+  }
+}

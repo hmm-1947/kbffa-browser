@@ -46,6 +46,8 @@ export class Player {
     this.lastAttacker = null
     this.lastAttackTime = -1000
     this.alive = true
+    this.ping = 0
+    this.pingAt = null
     this.respawnAt = 0
   }
 
@@ -148,7 +150,8 @@ export class Game {
     let t = null
     let best = 1e9
     for (const q of this.players.values()) {
-      if (q === p || !q.alive) continue
+      // Bots only ever go after real players, never each other.
+      if (q === p || !q.alive || q.isBot) continue
       const d = Math.hypot(q.pos.x - p.pos.x, q.pos.z - p.pos.z)
       if (d < best) {
         best = d
@@ -319,15 +322,19 @@ export class Game {
   }
 
   target(p) {
-    if (p.actionTarget) {
-      const h = p.actionTarget
-      p.actionTarget = null
-      const e = p.eye()
-      if (this.world.get(h.x, h.y, h.z) !== 0 && Math.hypot(h.x + 0.5 - e.x, h.y + 0.5 - e.y, h.z + 0.5 - e.z) <= C.REACH_BLOCK + 1) return h
-    }
+    // The client's reported actionTarget is only a hint for which face was
+    // clicked; it must match an authoritative raycast from the player's own
+    // eye/look, never trusted on distance alone. A distance-only check let a
+    // client claim any in-range block regardless of line of sight, which is
+    // how blocks ended up placed somewhere other than where the player was
+    // actually looking, and let placements happen through walls.
     const e = p.eye()
     const d = p.look()
-    return raycastBlocks(this.world, e.x, e.y, e.z, d.x, d.y, d.z, C.REACH_BLOCK)
+    const hit = raycastBlocks(this.world, e.x, e.y, e.z, d.x, d.y, d.z, C.REACH_BLOCK)
+    const claimed = p.actionTarget
+    p.actionTarget = null
+    if (hit && claimed && hit.x === claimed.x && hit.y === claimed.y && hit.z === claimed.z) return hit
+    return hit
   }
 
   breakBlock(p) {
@@ -480,6 +487,11 @@ export class Game {
       }
       a.age++
       const sp = Math.hypot(a.vel.x, a.vel.y, a.vel.z)
+      if (sp < 1e-6) {
+        a.stuck = true
+        a.vel = { x: 0, y: 0, z: 0 }
+        continue
+      }
       const dx = a.vel.x / sp
       const dy = a.vel.y / sp
       const dz = a.vel.z / sp
@@ -516,6 +528,10 @@ export class Game {
       Object.assign(pr.prev, pr.pos)
       pr.age++
       const sp = Math.hypot(pr.vel.x, pr.vel.y, pr.vel.z)
+      if (sp < 1e-6) {
+        this.pearls.splice(i, 1)
+        continue
+      }
       const dx = pr.vel.x / sp
       const dy = pr.vel.y / sp
       const dz = pr.vel.z / sp
@@ -590,27 +606,33 @@ export class Game {
     }
   }
 
+  nextBotName() {
+    const taken = new Set([...this.players.values()].map((q) => q.name.toLowerCase()))
+    let n = 1
+    while (taken.has(`bot${n}`)) n++
+    return `Bot${n}`
+  }
+
   command(text) {
     const parts = text.trim().split(/\s+/)
     const cmd = (parts[0] || '').toLowerCase()
     if (cmd === '/bot') {
       const arg = (parts[1] || '').toLowerCase()
       if (arg === 'on') {
+        // /bot on [count]: spawn melee-only bots (default 3, max 10). They chase
+        // and hit real players with their stick; no bow, pearls, blocks or plates.
+        const want = Math.max(1, Math.min(10, parseInt(parts[2], 10) || 3))
         this.botsEnabled = true
-        this.events.push({ type: 'chat', text: 'Bots: ON' })
+        const bots = [...this.players.values()].filter((q) => q.isBot)
+        for (let i = bots.length; i < want; i++) this.addPlayer(this.nextBotName(), true)
+        for (let i = bots.length - 1; i >= want; i--) this.removePlayer(bots[i].id)
+        this.events.push({ type: 'chat', text: `Bots: ON (${want})` })
       } else if (arg === 'off') {
         this.botsEnabled = false
-        for (const p of this.players.values()) {
-          if (p.isBot) {
-            p.act.attack = false
-            p.input.fwd = 0
-            p.input.strafe = 0
-            p.input.jump = false
-          }
-        }
+        for (const [id, q] of [...this.players]) if (q.isBot) this.players.delete(id)
         this.events.push({ type: 'chat', text: 'Bots: OFF' })
       } else {
-        this.events.push({ type: 'chat', text: 'Usage: /bot on | /bot off' })
+        this.events.push({ type: 'chat', text: 'Usage: /bot on [count] | /bot off' })
       }
       return
     }

@@ -46,10 +46,17 @@ export const ACTION_LABELS = {
   hotbar9: 'Hotbar Slot 9'
 }
 
+export const CHAT_POSITIONS = ['top-left', 'top-right', 'bottom-left', 'bottom-right']
+
 const DEFAULTS = {
   fov: 70,
+  guiScale: 0,
   mouseSens: 50,
   toggleSprint: false,
+  masterVolume: 100,
+  chatPosition: 'bottom-left',
+  chatLength: 8,
+  chatOpacity: 50,
   keys: { ...DEFAULT_KEYBINDS }
 }
 
@@ -60,8 +67,13 @@ function load() {
     const parsed = JSON.parse(raw)
     return {
       fov: typeof parsed.fov === 'number' ? parsed.fov : DEFAULTS.fov,
+      guiScale: Number.isInteger(parsed.guiScale) && parsed.guiScale >= 0 && parsed.guiScale <= 6 ? parsed.guiScale : DEFAULTS.guiScale,
       mouseSens: typeof parsed.mouseSens === 'number' ? parsed.mouseSens : DEFAULTS.mouseSens,
       toggleSprint: !!parsed.toggleSprint,
+      masterVolume: typeof parsed.masterVolume === 'number' ? parsed.masterVolume : DEFAULTS.masterVolume,
+      chatPosition: CHAT_POSITIONS.includes(parsed.chatPosition) ? parsed.chatPosition : DEFAULTS.chatPosition,
+      chatLength: typeof parsed.chatLength === 'number' ? parsed.chatLength : DEFAULTS.chatLength,
+      chatOpacity: typeof parsed.chatOpacity === 'number' ? parsed.chatOpacity : DEFAULTS.chatOpacity,
       keys: { ...DEFAULT_KEYBINDS, ...(parsed.keys || {}) }
     }
   } catch {

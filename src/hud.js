@@ -1,7 +1,31 @@
 import { CONFIG as C } from './config.js'
 import { img, url } from './textures.js'
 import { ID, faceTexName } from './blocks.js'
-import { makeBitmapTextCanvas } from './bitmapfont.js'
+import { makeBitmapTextCanvas, setPixelText, textWidth, drawBitmapText } from './bitmapfont.js'
+import { settings } from './settings.js'
+
+// HUD text is rasterised at 1 font-pixel per canvas pixel and sized with CSS so it
+// follows the GUI scale (--s) like every other HUD element.
+const sizeCanvas = (c) => {
+  c.style.width = `calc(${c.width}px * var(--s))`
+  c.style.height = `calc(${c.height}px * var(--s))`
+  return c
+}
+const guiText = (str, color) => sizeCanvas(makeBitmapTextCanvas(str, 1, color))
+// Vanilla experience level: green 0x80FF20 text with a black outline on four sides.
+const levelText = (str) => {
+  const c = document.createElement('canvas')
+  c.width = Math.ceil(textWidth(str, 1)) + 2
+  c.height = 10
+  const ctx = c.getContext('2d')
+  ctx.imageSmoothingEnabled = false
+  for (const [dx, dy] of [[0, 1], [2, 1], [1, 0], [1, 2]]) drawBitmapText(ctx, str, dx, dy, 1, '#000000', false)
+  drawBitmapText(ctx, str, 1, 1, 1, '#80ff20', false)
+  return sizeCanvas(c)
+}
+
+// Largest GUI scale that still fits the window (same rule Minecraft uses).
+export const maxGuiScale = () => Math.max(1, Math.floor(Math.min(innerWidth / 320, innerHeight / 240)))
 
 function blockIcon(id) {
   const c = document.createElement('canvas')
@@ -11,7 +35,9 @@ function blockIcon(id) {
   const top = img('blocks', faceTexName(id, 'top'))
   const left = img('blocks', faceTexName(id, 'side'))
   const right = img('blocks', faceTexName(id, 'side'))
-  const T = 16.6
+  const T = 26
+  const cx = 32
+  const top0 = (64 - T * 2) / 2
   const draw = (im, a, b, cc, d, e, f, dark) => {
     const s = im.width
     const sh = Math.min(im.height, im.width)
@@ -22,13 +48,12 @@ function blockIcon(id) {
       g.fillRect(0, 0, s, sh)
     }
   }
-  // Top-face diamond has vertices N=(32,4) E=(32+T,4+T/2) W=(32-T,4+T/2) S=(32,4+T).
+  // Top-face diamond has vertices N=(cx,top0) E=(cx+T,top0+T/2) W=(cx-T,top0+T/2) S=(cx,top0+T).
   // The side faces must start exactly at W and S so their top edges line up with
-  // the top face's edges instead of leaving a gap (previous e/f values of
-  // (0,16)/(32,16) didn't match those vertices, which is why the cube looked broken).
-  draw(top, T, T * 0.5, -T, T * 0.5, 32, 4, 0)
-  draw(left, T, T * 0.5, 0, T, 32 - T, 4 + T * 0.5, 0.3)
-  draw(right, T, -T * 0.5, 0, T, 32, 4 + T, 0.5)
+  // the top face's edges instead of leaving a gap.
+  draw(top, T, T * 0.5, -T, T * 0.5, cx, top0, 0)
+  draw(left, T, T * 0.5, 0, T, cx - T, top0 + T * 0.5, 0.3)
+  draw(right, T, -T * 0.5, 0, T, cx, top0 + T, 0.5)
   return c
 }
 
@@ -41,15 +66,12 @@ function itemIcon(name) {
 
 function plateIcon() {
   const c = document.createElement('canvas')
-  c.width = c.height = 16
+  c.width = c.height = 64
   const g = c.getContext('2d')
   g.imageSmoothingEnabled = false
   const gold = img('blocks', 'gold_block')
-  g.drawImage(gold, 0, 0, gold.width, gold.width, 1, 6, 14, 8)
-  g.fillStyle = 'rgba(0,0,0,0.35)'
-  g.fillRect(1, 12, 14, 2)
-  g.strokeStyle = 'rgba(0,0,0,0.4)'
-  g.strokeRect(1.5, 6.5, 13, 7)
+  const inset = 8
+  g.drawImage(gold, 0, 0, gold.width, gold.width, inset, inset, 64 - inset * 2, 64 - inset * 2)
   return c
 }
 
@@ -69,6 +91,11 @@ export class Hud {
     this.hurt = el('div', 'hurt', root)
     this.feed = el('div', 'feed', root)
     this.board = el('div', 'board', root)
+    this.boardTitle = el('div', 'board-title', this.board)
+    this.boardTitle.appendChild(guiText('KBFFA', '#ffff55'))
+    this.boardRows = el('div', 'board-rows', this.board)
+    this.boardPing = '0ms'
+    this.boardPingUpdatedAt = -Infinity
     this.hotbar = el('div', 'hotbar', root)
     this.hotbar.style.backgroundImage = `url(${url('gui', 'hotbar')})`
     this.status = el('div', 'status', root)
@@ -78,13 +105,23 @@ export class Hud {
     // food simulation, so both vanilla-style meters begin full and remain a
     // truthful presentation of the current ruleset.
     for (let i = 0; i < 10; i++) {
+      const heartBg = el('div', 'status-icon heart-container', this.health)
+      heartBg.style.left = `calc(${i * 8}px * var(--s))`
       const heart = el('div', 'status-icon heart-full', this.health)
       heart.style.left = `calc(${i * 8}px * var(--s))`
+      const foodBg = el('div', 'status-icon hunger-container', this.hunger)
+      foodBg.style.right = `calc(${i * 8}px * var(--s))`
       const food = el('div', 'status-icon hunger-full', this.hunger)
       // Minecraft draws the first food icon at the far-right edge and steps
       // left by eight pixels for every following icon.
       food.style.right = `calc(${i * 8}px * var(--s))`
     }
+    // Survival-style experience bar: icons.png (0,64) background and (0,69) fill,
+    // 182x5 at 29 px above the bottom edge, level number centred above it.
+    this.xp = el('div', 'xp', root)
+    this.xpFill = el('div', 'xp-fill', this.xp)
+    this.xpLevel = el('div', 'xp-level', root)
+    this.xpKey = ''
     this.sel = el('div', 'selector', this.hotbar)
     this.sel.style.backgroundImage = `url(${url('gui', 'hotbar_selected')})`
     this.slots = []
@@ -108,7 +145,7 @@ export class Hud {
       if (i === 0) {
         s.appendChild(itemIcon('arrow'))
         const c = el('div', 'count', s)
-        c.textContent = '64'
+        setPixelText(c, '64', 2, '#ffffff')
       }
       if (i >= 27 && C.HOTBAR[i - 27]) {
         const hotbarIndex = i - 27
@@ -170,7 +207,9 @@ export class Hud {
   }
 
   resize() {
-    const s = Math.max(1, Math.min(3, Math.floor(Math.min(innerWidth / 320, innerHeight / 240))))
+    // guiScale 0 = Auto (largest that fits, capped at 3 as before); otherwise the
+    // chosen value, clamped so it never exceeds what fits in the window.
+    const s = settings.guiScale > 0 ? Math.min(settings.guiScale, maxGuiScale()) : Math.min(3, maxGuiScale())
     // Set on :root (not just #hud) so the pause/options/controls screens, which
     // live outside #hud, scale together with the HUD at the same "GUI scale"
     // Minecraft would pick for this window size.
@@ -192,7 +231,7 @@ export class Hud {
 
   addFeed(text) {
     const d = el('div', 'feed-line', this.feed)
-    d.appendChild(makeBitmapTextCanvas(text, 3, '#ffffff'))
+    d.appendChild(guiText(text, '#ffffff'))
     setTimeout(() => d.remove(), 6000)
   }
 
@@ -202,39 +241,83 @@ export class Hud {
       const def = sl.def
       let txt = ''
       let cd = ''
+      let hide = false
       if (def) {
         if (def.type === 'block') txt = '64'
-        else if (def.type === 'pearl') txt = player.pearls > 1 ? String(player.pearls) : ''
-        else if (def.type === 'plate' && player.plate) cd = String(Math.ceil((player.plate.expire - game.time) / 20))
+        else if (def.type === 'pearl') {
+          // No pearls: hide the icon. Exactly one: show the icon without a number.
+          const n = Math.max(0, player.pearls ?? 0)
+          txt = n > 1 ? String(n) : ''
+          hide = n <= 0
+        }
+        else if (def.type === 'plate') {
+          // Online, the player's plate is not serialized; find it by owner so the
+          // 10 s timer works in both online and offline play.
+          const plate = game.plates.find((pl) => pl.owner === player.id)
+          if (plate) txt = String(Math.max(1, Math.ceil((plate.expire - game.time) / C.TPS)))
+        }
       }
-      const key = txt + '|' + cd
+      const key = txt + '|' + cd + '|' + hide
       if (key !== sl.last) {
         sl.last = key
-        sl.count.textContent = txt
-        sl.cd.textContent = cd
+        sl.s.classList.toggle('empty', hide)
+        if (txt) setPixelText(sl.count, txt, 1, '#ffffff')
+        else sl.count.replaceChildren()
+        if (cd) setPixelText(sl.cd, cd, 1, '#ffffff')
+        else sl.cd.replaceChildren()
         sl.cd.style.display = cd ? 'flex' : 'none'
       }
     }
-    const rows = [...game.players.values()].sort((a, b) => b.kills - a.kills)
     const st = player.stats || {}
-    const html = [
-      'Statistics',
-      `Kills: ${st.kills ?? player.kills}`,
-      `Deaths: ${st.deaths ?? player.deaths}`,
-      `Max streak: ${st.maxKillStreak ?? 0}`,
-      `Death streak: ${st.deathStreak ?? 0}`,
-      `Pearls: ${st.pearlsThrown ?? 0}`,
-      `Blocks: ${st.blocksPlaced ?? 0}`,
-      '',
-      ...rows.map((p) => `${p.name}  ${p.kills}`)
-    ].join('\n')
-    if (html !== this.boardText) {
-      this.boardText = html
-      this.board.innerHTML = ''
-      for (const lineText of html.split('\n')) {
-        const line = el('div', null, this.board)
-        line.style.marginBottom = '2px'
-        if (lineText) line.appendChild(makeBitmapTextCanvas(lineText, 3, '#ffffff'))
+    const kills = Number(st.kills ?? player.kills ?? 0)
+    const deaths = Number(st.deaths ?? player.deaths ?? 0)
+    const killStreak = Number(player.killStreak ?? st.killStreak ?? 0)
+    const deathStreak = Number(player.deathStreak ?? st.deathStreak ?? 0)
+    const kdRatio = deaths > 0 ? (kills / deaths).toFixed(2) : kills.toFixed(2)
+    // Experience bar: level = kills, bar fill = kill streak progress (5 = full).
+    const level = Math.max(0, Math.floor(kills))
+    const xpPx = Math.round(Math.min(1, Math.max(0, killStreak) / 5) * 182)
+    const xpKey = level + '|' + xpPx
+    if (xpKey !== this.xpKey) {
+      this.xpKey = xpKey
+      this.xpFill.style.width = `calc(${xpPx}px * var(--s))`
+      this.xpLevel.replaceChildren()
+      if (level > 0) this.xpLevel.appendChild(levelText(String(level)))
+    }
+    const online = Math.max(0, game?.players?.size ?? 1)
+    const now = performance.now()
+    if (now - this.boardPingUpdatedAt >= 3000) {
+      this.boardPingUpdatedAt = now
+      this.boardPing = Number.isFinite(player.ping) ? String(Math.round(player.ping)) + 'ms' : '0ms'
+    }
+    const ping = this.boardPing
+    const boardState = [
+      { section: 'STATS' },
+      ['Kills:', String(kills)],
+      ['Deaths:', String(deaths)],
+      ['Kill Streak:', String(killStreak)],
+      ['Death Streak:', String(deathStreak)],
+      ['KDR:', kdRatio],
+      { section: 'SERVER' },
+      ['Online:', String(online)],
+      ['Ping:', ping]
+    ]
+    const boardText = JSON.stringify(boardState)
+    if (boardText !== this.boardText) {
+      this.boardText = boardText
+      this.boardRows.replaceChildren()
+      for (const entry of boardState) {
+        if (entry.section) {
+          const section = el('div', 'board-section', this.boardRows)
+          section.appendChild(guiText(entry.section, '#ffffff'))
+          continue
+        }
+        const [label, value] = entry
+        const row = el('div', 'board-row', this.boardRows)
+        const labelEl = el('span', 'board-label', row)
+        labelEl.appendChild(guiText(label, '#ffffff'))
+        const valueEl = el('span', 'board-value', row)
+        valueEl.appendChild(guiText(value, '#ffff55'))
       }
     }
   }

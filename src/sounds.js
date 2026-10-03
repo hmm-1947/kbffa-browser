@@ -1,3 +1,5 @@
+import { settings } from './settings.js'
+
 const VERSION = Date.now()
 
 // These groups match the event entries in Minecraft's 26.2 sounds.json.
@@ -22,7 +24,8 @@ export function playSound(event, { volume = 1, pitch = 1 } = {}) {
   if (!files) return
   const name = files[Math.floor(Math.random() * files.length)]
   const audio = new Audio(`${import.meta.env.BASE_URL}sounds/${name}.ogg?v=${VERSION}`)
-  audio.volume = Math.max(0, Math.min(1, volume))
+  const master = Math.max(0, Math.min(100, settings.masterVolume ?? 100)) / 100
+  audio.volume = Math.max(0, Math.min(1, volume)) * master
   audio.playbackRate = pitch
   // Browsers can reject a sound before the first player interaction.  Sound
   // playback is optional in that situation and becomes available on the next

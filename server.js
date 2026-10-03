@@ -44,7 +44,8 @@ const serialize = (game) => ({
     id: p.id, name: p.name, pos: p.pos, prev: p.prev, vel: p.vel, yaw: p.yaw, pitch: p.pitch,
     prevYaw: p.prevYaw, prevPitch: p.prevPitch, alive: p.alive, sneaking: p.sneaking,
     sprinting: p.sprinting, slot: p.slot, pearls: p.pearls, arrows: p.arrows, kills: p.kills,
-    deaths: p.deaths, hurtAnim: p.hurtAnim, swingTick: p.swingTick, onGround: p.onGround, stats: p.stats
+    deaths: p.deaths, hurtAnim: p.hurtAnim, swingTick: p.swingTick, onGround: p.onGround, stats: p.stats,
+    pingAt: p.pingAt ?? null
   })),
   events: game.events
 })
@@ -90,7 +91,9 @@ wss.on('connection', (ws) => {
       p.yaw = Number.isFinite(m.yaw) ? m.yaw : p.yaw
       p.pitch = Number.isFinite(m.pitch) ? Math.max(-Math.PI / 2, Math.min(Math.PI / 2, m.pitch)) : p.pitch
       if (Number.isInteger(m.slot) && m.slot >= 0 && m.slot < 9) session.map.game.setSlot(p, m.slot)
+      if (m.stopSprint) p.wantSprint = false
       if (m.sprint) p.act.sprintTap = true
+      if (Number.isFinite(m.pingAt)) p.pingAt = m.pingAt
     }
     if (m.type === 'action') {
       if (Number.isFinite(m.yaw)) p.yaw = m.yaw

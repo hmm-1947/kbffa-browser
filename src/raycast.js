@@ -16,7 +16,12 @@ export function raycastBlocks(world, ox, oy, oz, dx, dy, dz, maxDist) {
   let nz = 0
   let t = 0
   if (world.isSolid(x, y, z)) return { x, y, z, nx, ny, nz, t: 0 }
+  if (!Number.isFinite(dx) || !Number.isFinite(dy) || !Number.isFinite(dz)) return null
+  // Bound iterations defensively so a pathological input can never hang
+  // the caller: one step per unit of maxDist is always enough headroom.
+  let guard = Math.ceil(maxDist) * 3 + 8
   for (;;) {
+    if (--guard < 0) return null
     if (tx <= ty && tx <= tz) {
       t = tx
       if (t > maxDist) return null
