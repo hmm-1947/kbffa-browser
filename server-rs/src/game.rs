@@ -1,5 +1,5 @@
 use rand::Rng;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use crate::blocks::{id_of, sound_of};
 use crate::config::*;
@@ -26,6 +26,26 @@ pub struct Actions {
     pub attack: bool,
     pub use_held: bool,
     pub sprint_tap: bool,
+    pub use_pending: bool,
+}
+
+#[derive(Clone)]
+pub struct InputRec {
+    pub seq: i64,
+    pub fwd: f64,
+    pub strafe: f64,
+    pub jump: bool,
+    pub sneak: bool,
+    pub yaw: f64,
+    pub pitch: f64,
+    pub slot: usize,
+    pub sprint: bool,
+    pub stop_sprint: bool,
+    pub attack: bool,
+    pub use_held: bool,
+    pub use_click: bool,
+    pub place_seq: i64,
+    pub target: Option<BlockTarget>,
 }
 
 #[derive(Clone, Copy, serde::Serialize)]
@@ -33,6 +53,9 @@ pub struct BlockTarget {
     pub x: i32,
     pub y: i32,
     pub z: i32,
+    pub nx: i32,
+    pub ny: i32,
+    pub nz: i32,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -94,6 +117,12 @@ pub struct Player {
     pub alive: bool,
     pub respawn_at: i64,
     pub action_target: Option<BlockTarget>,
+    pub pending_target: Option<BlockTarget>,
+    pub queue: VecDeque<InputRec>,
+    pub input_ack: i64,
+    pub place_seq: i64,
+    pub place_ack: i64,
+    pub ping_at: Option<f64>,
 }
 
 impl Player {
@@ -137,6 +166,12 @@ impl Player {
             alive: true,
             respawn_at: 0,
             action_target: None,
+            pending_target: None,
+            queue: VecDeque::new(),
+            input_ack: 0,
+            place_seq: 0,
+            place_ack: 0,
+            ping_at: None,
         }
     }
 
@@ -220,7 +255,7 @@ impl Game {
         build_sky(&mut world);
         Game {
             world,
-            spawn: Spawn { x: 0.5, y: 80.0, z: 0.5 },
+            spawn: Spawn { x: 0.5, y: 101.0, z: 0.5 },
             players: HashMap::new(),
             arrows: Vec::new(),
             pearls: Vec::new(),
@@ -239,13 +274,13 @@ impl Game {
         let mut p = Player::new(id, name.clone(), false);
         self.respawn(&mut p);
         self.players.insert(id, p);
-        self.events.push(GameEvent { kind: "chat".to_string(), id: None, victim: None, killer: None, sound: None, power: None, text: Some(format!("{} joined the game", name)) });
+        self.events.push(GameEvent { kind: "chat".to_string(), id: None, victim: None, killer: None, sound: None, power: None, text: Some(format!("\u{a7}e{} joined the game", name)) });
         id
     }
 
     pub fn remove_player(&mut self, id: u64) {
         if let Some(p) = self.players.remove(&id) {
-            self.events.push(GameEvent { kind: "chat".to_string(), id: None, victim: None, killer: None, sound: None, power: None, text: Some(format!("{} left the game", p.name)) });
+            self.events.push(GameEvent { kind: "chat".to_string(), id: None, victim: None, killer: None, sound: None, power: None, text: Some(format!("\u{a7}e{} left the game", p.name)) });
         }
     }
 
@@ -255,6 +290,8 @@ impl Game {
                 p.bow_ticks = -1;
             }
             p.slot = n;
+            p.act.use_pending = false;
+            p.pending_target = None;
         }
     }
 
@@ -290,7 +327,14 @@ impl Game {
         for id in ids {
             let alive = self.players.get(&id).map(|p| p.alive).unwrap_or(false);
             if !alive {
-                let due = self.players.get(&id).map(|p| self.time >= p.respawn_at).unwrap_or(false);
+                let due = {
+                    let p = self.players.get_mut(&id).unwrap();
+                    if let Some(last) = p.queue.back() {
+                        p.input_ack = last.seq;
+                        p.queue.clear();
+                    }
+                    self.time >= p.respawn_at
+                };
                 if due {
                     let mut p = self.players.remove(&id).unwrap();
                     self.respawn(&mut p);
@@ -298,17 +342,33 @@ impl Game {
                 }
                 continue;
             }
-            {
+            let mut n = {
                 let p = self.players.get_mut(&id).unwrap();
                 p.prev = p.pos;
                 p.prev_yaw = p.yaw;
                 p.prev_pitch = p.pitch;
-            }
-            self.actions(id);
-            self.mv(id);
-            let void = self.players.get(&id).map(|p| p.pos.y < VOID_Y).unwrap_or(false);
-            if void {
-                self.kill(id);
+                if p.queue.len() > 4 { 2 } else { 1 }
+            };
+            while n > 0 {
+                n -= 1;
+                let rec = {
+                    let p = self.players.get_mut(&id).unwrap();
+                    if !p.alive {
+                        break;
+                    }
+                    p.queue.pop_front()
+                };
+                let rec = match rec {
+                    Some(r) => r,
+                    None => break,
+                };
+                self.apply_input(id, rec);
+                self.actions(id);
+                self.mv(id);
+                let void = self.players.get(&id).map(|p| p.pos.y < VOID_Y).unwrap_or(false);
+                if void {
+                    self.kill(id);
+                }
             }
         }
         self.update_plates();
@@ -317,12 +377,46 @@ impl Game {
         self.expire();
     }
 
+    fn apply_input(&mut self, id: u64, r: InputRec) {
+        {
+            let p = self.players.get_mut(&id).unwrap();
+            p.input.fwd = r.fwd;
+            p.input.strafe = r.strafe;
+            p.input.jump = r.jump;
+            p.input.sneak = r.sneak;
+            p.yaw = r.yaw;
+            p.pitch = r.pitch;
+        }
+        let slot = self.players.get(&id).unwrap().slot;
+        if r.slot != slot {
+            self.set_slot(id, r.slot);
+        }
+        let p = self.players.get_mut(&id).unwrap();
+        if r.stop_sprint {
+            p.want_sprint = false;
+        }
+        if r.sprint {
+            p.act.sprint_tap = true;
+        }
+        if r.attack {
+            p.act.attack = true;
+        }
+        p.action_target = r.target;
+        if r.use_click {
+            p.act.use_pending = true;
+            p.pending_target = r.target;
+        }
+        p.act.use_held = r.use_held;
+        p.place_seq = r.place_seq;
+        p.input_ack = r.seq;
+    }
+
     fn actions(&mut self, id: u64) {
-        let (attack, use_held, slot, bow_ticks, use_delay) = {
+        let (attack, use_held, use_pending, slot, bow_ticks) = {
             let p = self.players.get(&id).unwrap();
-            (p.act.attack, p.act.use_held, p.slot, p.bow_ticks, p.use_delay)
+            (p.act.attack, p.act.use_held, p.act.use_pending, p.slot, p.bow_ticks)
         };
-        if use_delay > 0 {
+        if self.players.get(&id).unwrap().use_delay > 0 {
             self.players.get_mut(&id).unwrap().use_delay -= 1;
         }
         if attack {
@@ -347,10 +441,26 @@ impl Game {
             }
         } else {
             self.players.get_mut(&id).unwrap().bow_ticks = -1;
-            if use_held && use_delay == 0 {
+            let mut waiting = (use_held || use_pending) && use_delay > 0;
+            if (use_held || use_pending) && use_delay == 0 {
+                {
+                    let p = self.players.get_mut(&id).unwrap();
+                    if use_pending {
+                        if let Some(t) = p.pending_target {
+                            p.action_target = Some(t);
+                        }
+                    }
+                    p.act.use_pending = false;
+                    p.pending_target = None;
+                }
                 match hotbar_type {
                     "block" => {
-                        self.players.get_mut(&id).unwrap().use_delay = 4;
+                        waiting = false;
+                        {
+                            let p = self.players.get_mut(&id).unwrap();
+                            p.use_delay = 4;
+                            p.place_ack = p.place_seq;
+                        }
                         if self.place_block(id) {
                             let t = self.time;
                             self.players.get_mut(&id).unwrap().swing_tick = t;
@@ -366,6 +476,10 @@ impl Game {
                     }
                     _ => {}
                 }
+            }
+            if hotbar_type != "block" || !waiting {
+                let p = self.players.get_mut(&id).unwrap();
+                p.place_ack = p.place_seq;
             }
         }
     }
@@ -563,24 +677,41 @@ impl Game {
         }
     }
 
-    /// Resolves the block the player is currently targeting for place/plate
-    /// actions. A client-reported `action_target` is only ever used as a
-    /// hint: it must exactly match the block an authoritative server-side
-    /// raycast from the player's own eye/look direction would hit, which
-    /// closes the "place/see through walls" exploit where a client could
-    /// previously submit an arbitrary in-range coordinate with no
-    /// line-of-sight check.
-    fn target(&self, id: u64) -> Option<crate::raycast::RayHit> {
-        let p = self.players.get(&id)?;
-        let e = p.eye();
-        let d = p.look();
+    fn target(&mut self, id: u64) -> Option<crate::raycast::RayHit> {
+        let (e, d, claimed) = {
+            let p = self.players.get_mut(&id)?;
+            (p.eye(), p.look(), p.action_target.take())
+        };
         let hit = raycast_blocks(&self.world, e.x, e.y, e.z, d.x, d.y, d.z, REACH_BLOCK);
-        if let (Some(h), Some(claimed)) = (&hit, &p.action_target) {
+        let claimed = match claimed {
+            Some(c) => c,
+            None => return hit,
+        };
+        if claimed.nx.abs() + claimed.ny.abs() + claimed.nz.abs() != 1 {
+            return hit;
+        }
+        if let Some(h) = &hit {
             if h.x == claimed.x && h.y == claimed.y && h.z == claimed.z {
-                return hit;
+                return Some(crate::raycast::RayHit { x: h.x, y: h.y, z: h.z, nx: claimed.nx, ny: claimed.ny, nz: claimed.nz, t: h.t });
             }
         }
-        hit
+        if !self.world.is_solid(claimed.x, claimed.y, claimed.z) {
+            return hit;
+        }
+        let cx = claimed.x as f64 + 0.5 - e.x;
+        let cy = claimed.y as f64 + 0.5 - e.y;
+        let cz = claimed.z as f64 + 0.5 - e.z;
+        let dist = (cx * cx + cy * cy + cz * cz).sqrt();
+        if dist > REACH_BLOCK + 1.0 {
+            return hit;
+        }
+        let los = raycast_blocks(&self.world, e.x, e.y, e.z, cx / dist, cy / dist, cz / dist, dist + 0.5);
+        match los {
+            Some(l) if l.x == claimed.x && l.y == claimed.y && l.z == claimed.z => {
+                Some(crate::raycast::RayHit { x: claimed.x, y: claimed.y, z: claimed.z, nx: claimed.nx, ny: claimed.ny, nz: claimed.nz, t: dist })
+            }
+            _ => hit,
+        }
     }
 
     fn can_place(&self, x: i32, y: i32, z: i32) -> bool {
@@ -930,15 +1061,27 @@ impl Game {
         }
     }
 
+    fn chat_event(&mut self, text: String) {
+        self.events.push(GameEvent { kind: "chat".to_string(), id: None, victim: None, killer: None, sound: None, power: None, text: Some(text) });
+    }
+
     pub fn command(&mut self, id: u64, text: &str) {
-        let parts: Vec<&str> = text.trim().split_whitespace().collect();
-        let cmd = parts.first().unwrap_or(&"").to_lowercase();
-        let _ = id;
-        if cmd == "/bot" {
-            self.events.push(GameEvent { kind: "chat".to_string(), id: None, victim: None, killer: None, sound: None, power: None, text: Some("Bots are not available on this server.".to_string()) });
+        let msg: String = text.trim().chars().filter(|c| *c != '\u{a7}').collect();
+        if msg.is_empty() {
             return;
         }
-        self.events.push(GameEvent { kind: "chat".to_string(), id: None, victim: None, killer: None, sound: None, power: None, text: Some(format!("Unknown command: {}", cmd)) });
+        if !msg.starts_with('/') {
+            let name = self.players.get(&id).map(|p| p.name.clone()).unwrap_or_else(|| "Player".to_string());
+            self.chat_event(format!("<{}> {}", name, msg));
+            return;
+        }
+        let cmd = msg.split_whitespace().next().unwrap_or("").to_lowercase();
+        if cmd == "/bot" {
+            self.chat_event("Bots are not available on this server.".to_string());
+            return;
+        }
+        self.chat_event("\u{a7}cUnknown or incomplete command, see below for error".to_string());
+        self.chat_event(format!("\u{a7}c\u{a7}n{}\u{a7}r\u{a7}c\u{a7}o<--[HERE]", &msg[1..]));
     }
 }
 

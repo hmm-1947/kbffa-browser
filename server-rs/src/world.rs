@@ -43,36 +43,16 @@ impl World {
     }
 }
 
+const MAP: &[u8] = include_bytes!("../data/map.bin");
+
 pub fn build_sky(world: &mut World) {
-    use crate::blocks::id_of;
-    let mut disc = |y: i32, r: i32, id: u8| {
-        for x in -r..=r {
-            for z in -r..=r {
-                if x * x + z * z <= r * r + r {
-                    world.set(x, y, z, id);
-                }
-            }
+    let mut at = 0usize;
+    for chunk in MAP.chunks_exact(5) {
+        let count = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as usize;
+        let id = chunk[4];
+        if id != 0 {
+            world.data[at..at + count].fill(id);
         }
-    };
-    disc(63, 14, id_of("grass"));
-    disc(62, 14, id_of("dirt"));
-    disc(61, 13, id_of("dirt"));
-    disc(60, 11, id_of("stone"));
-    disc(59, 9, id_of("stone"));
-    disc(58, 7, id_of("stone"));
-    disc(57, 5, id_of("stone"));
-    disc(56, 3, id_of("stone"));
-    disc(55, 1, id_of("stone"));
-    let stone = id_of("stone");
-    for (px, pz) in [(8, 8), (-8, 8), (8, -8), (-8, -8)] {
-        for y in 64..=66 {
-            world.set(px, y, pz, stone);
-        }
-    }
-    let spawn = id_of("spawn");
-    for x in -1..=1 {
-        for z in -1..=1 {
-            world.set(x, 79, z, spawn);
-        }
+        at += count;
     }
 }

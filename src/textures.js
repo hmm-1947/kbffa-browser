@@ -77,13 +77,12 @@ export function buildAtlas() {
     const cy = Math.floor(i / cols)
     const im = img('blocks', n)
     g.drawImage(im, 0, 0, im.width, Math.min(im.height, im.width), cx * tile, cy * tile, tile, tile)
-    // Address texel centres.  It prevents bilinear sampling from crossing an
-    // atlas boundary while preserving the full visible tile at raster scale.
+    const e = 0.02
     map[n] = [
-      (cx * tile + 0.5) / canvas.width,
-      1 - ((cy + 1) * tile - 0.5) / canvas.height,
-      ((cx + 1) * tile - 0.5) / canvas.width,
-      1 - (cy * tile + 0.5) / canvas.height
+      (cx * tile + e) / canvas.width,
+      1 - ((cy + 1) * tile - e) / canvas.height,
+      ((cx + 1) * tile - e) / canvas.width,
+      1 - (cy * tile + e) / canvas.height
     ]
   })
 

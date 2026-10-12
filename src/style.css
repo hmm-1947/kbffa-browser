@@ -66,18 +66,49 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #000; font-f
 .inv-hotbar-slot.selected { outline: calc(1px * var(--s)) solid #ffff55; outline-offset: calc(-1px * var(--s)); }
 .inv-slot .count { right: calc(0.67px * var(--s)); bottom: 0; }
 .inv-slot .count canvas { transform: scale(calc(var(--s) * 2 / 3)); transform-origin: bottom right; }
-#menu { position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; align-items: center; justify-content: center; background: linear-gradient(#4c6dc9, #7fa3e8 55%, #b7cdf2); color: #fff; text-align: center; }
-#menu .logo { width: min(60vw, 600px); image-rendering: pixelated; margin-bottom: 4px; filter: drop-shadow(3px 3px 0 rgba(0,0,0,.4)); }
-#menu h1 { display: none; }
-.server-title { font-size: 26px; margin: 8px; text-shadow: 2px 2px #333; }
-.server-list { width: min(600px, 85vw); max-height: 42vh; overflow: auto; border: 3px solid #222; background: rgba(0,0,0,.45); }
-.server-entry { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid #666; cursor: pointer; }
-.server-entry:hover, .server-entry.selected { background: rgba(90,130,255,.55); }
-.join-panel { display: flex; gap: 8px; align-items: center; margin-top: 14px; flex-wrap: wrap; justify-content: center; }
-.join-panel input, #statsButton { font: 16px 'Courier New', monospace; padding: 7px; }
-.join-panel button, #statsButton { border: 2px solid #333; background: #aaa; cursor: pointer; padding: 7px 14px; font: bold 15px 'Courier New', monospace; }
-.join-error { flex-basis: 100%; min-height: 18px; color: #ffdddd; text-shadow: 1px 1px #600; }
-.lobby-stats { min-height: 0; margin: 10px; color: #fff; text-align: left; }
+#menu { position: fixed; inset: 0; z-index: 30; background: linear-gradient(#4c6dc9, #7fa3e8 55%, #b7cdf2); color: #fff; overflow: hidden; }
+#menu::before { content: ''; position: absolute; inset: 0; background: url(/textures/gui/server_list/menu_background.png) 0 0 / calc(32px * var(--s)) calc(32px * var(--s)); image-rendering: pixelated; }
+.sl-header { position: absolute; left: 0; right: 0; top: 0; height: calc(33px * var(--s)); }
+.sl-header::after, .sl-footer::before { content: ''; position: absolute; left: 0; right: 0; height: calc(2px * var(--s)); background: url(/textures/gui/server_list/header_separator.png) 0 0 / calc(32px * var(--s)) calc(2px * var(--s)) repeat-x; image-rendering: pixelated; z-index: 2; }
+.sl-header::after { bottom: 0; }
+.sl-footer::before { top: 0; background-image: url(/textures/gui/server_list/footer_separator.png); }
+.sl-title { position: absolute; top: calc(12px * var(--s)); left: 0; right: 0; display: flex; justify-content: center; line-height: 0; }
+.sl-list { position: absolute; left: 0; right: 0; top: calc(33px * var(--s)); bottom: calc(60px * var(--s)); overflow-y: auto; overflow-x: hidden; background: url(/textures/gui/server_list/menu_list_background.png) var(--sl-bx, 0px) var(--sl-by, 0px) / calc(32px * var(--s)) calc(32px * var(--s)); background-attachment: local; image-rendering: pixelated; scrollbar-width: none; outline: none; }
+.sl-list::-webkit-scrollbar { display: none; }
+.sl-sb { position: absolute; right: 0; top: calc(33px * var(--s)); bottom: calc(60px * var(--s)); width: calc(6px * var(--s)); display: none; z-index: 2; cursor: pointer; }
+.sl-sb.show { display: block; }
+.sl-sb.drag { cursor: ns-resize; }
+.sl-sb::before { content: ''; position: absolute; inset: 0; box-sizing: border-box; border-style: solid; border-width: calc(1px * var(--s)); border-image-source: url(/textures/gui/widget/scroller_background.png); border-image-slice: 1 fill; border-image-width: calc(1px * var(--s)); image-rendering: pixelated; }
+.sl-sb-thumb { position: absolute; left: 0; right: 0; top: 0; box-sizing: border-box; border-style: solid; border-width: calc(1px * var(--s)); border-image-source: url(/textures/gui/widget/scroller.png); border-image-slice: 1 fill; border-image-width: calc(1px * var(--s)); image-rendering: pixelated; }
+.sl-inner { width: calc(305px * var(--s)); max-width: 100%; margin: 0 auto; padding: calc(2px * var(--s)) 0; }
+.sl-entry { position: relative; height: calc(36px * var(--s)); box-sizing: border-box; scroll-margin-block: calc(2px * var(--s)); }
+.sl-entry.selected { background: #000; border: calc(1px * var(--s)) solid #808080; }
+.sl-list:focus-within .sl-entry.selected { border-color: #fff; }
+.sl-entry > * { position: absolute; line-height: 0; }
+.sl-entry.selected > * { margin: calc(-1px * var(--s)); }
+.sl-icon { left: calc(2px * var(--s)); top: calc(2px * var(--s)); width: calc(32px * var(--s)); height: calc(32px * var(--s)); background: url(/textures/gui/server_list/unknown_server.png) 0 0 / 100% 100%; image-rendering: pixelated; }
+.sl-icon .sl-join { position: absolute; inset: 0; display: none; background: rgba(144,144,144,.627) url(/textures/gui/server_list/join.png) 0 0 / 100% 100%; image-rendering: pixelated; }
+.sl-entry:hover .sl-join { display: block; }
+.sl-icon .sl-hot { position: absolute; top: 0; bottom: 0; left: 50%; right: 0; cursor: pointer; }
+.sl-icon:has(.sl-hot:hover) .sl-join { background-image: url(/textures/gui/server_list/join_highlighted.png); }
+.sl-name { left: calc(37px * var(--s)); top: calc(3px * var(--s)); }
+.sl-motd { left: calc(37px * var(--s)); }
+.sl-status { top: calc(3px * var(--s)); }
+.sl-ping { top: calc(2px * var(--s)); right: calc(7px * var(--s)); width: calc(10px * var(--s)); height: calc(8px * var(--s)); background-size: 100% 100%; image-rendering: pixelated; }
+.sl-footer { position: absolute; left: 0; right: 0; bottom: 0; height: calc(60px * var(--s)); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(4px * var(--s)); }
+.sl-row { display: flex; gap: calc(4px * var(--s)); justify-content: center; }
+.sl-w100 { width: calc(100px * var(--s)); flex: none; }
+.sl-w74 { width: calc(74px * var(--s)); flex: none; }
+.sl-edit { position: relative; height: calc(20px * var(--s)); box-sizing: border-box; background: #000; border: calc(1px * var(--s)) solid #a0a0a0; cursor: text; }
+.sl-edit.focus { border-color: #fff; }
+.sl-edit input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: 0; padding: 0; cursor: text; }
+.sl-edit-view { position: absolute; left: calc(3px * var(--s)); top: calc(5px * var(--s)); right: calc(3px * var(--s)); height: calc(9px * var(--s)); overflow: hidden; pointer-events: none; line-height: 0; white-space: nowrap; }
+.sl-edit-view canvas { position: absolute; left: 0; top: 0; }
+.sl-caret { position: absolute; top: 0; width: calc(1px * var(--s)); height: calc(9px * var(--s)); background: #fff; }
+.sl-error { position: absolute; left: 0; right: 0; bottom: calc(66px * var(--s)); display: flex; justify-content: center; line-height: 0; z-index: 3; pointer-events: none; }
+.sl-tooltip { position: absolute; left: 50%; bottom: calc(80px * var(--s)); transform: translateX(-50%); display: none; flex-direction: column; padding: calc(4px * var(--s)); background: rgba(16,0,16,.94); border: calc(1px * var(--s)) solid #3c0094; line-height: 0; gap: calc(2px * var(--s)); z-index: 4; pointer-events: none; }
+.sl-tooltip.show { display: flex; }
+.sl-line { display: block; line-height: 0; }
 
 #pauseBlur {
   position: fixed; inset: 0; z-index: 18; display: none;
@@ -173,26 +204,15 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #000; font-f
 
 .px-text canvas { display: block; image-rendering: pixelated; }
 
-#chatWrap {
-  position: fixed; display: flex; flex-direction: column; width: min(520px, 60vw); max-width: calc(100vw - 20px);
-  z-index: 15; font-family: 'Courier New', monospace; --chat-opacity: 0.5;
-}
-#chatWrap.chat-bottom-left { left: 10px; bottom: 10px; }
-#chatWrap.chat-bottom-right { right: 10px; bottom: 10px; }
-#chatWrap.chat-top-left { left: 10px; top: 10px; }
-#chatWrap.chat-top-right { right: 10px; top: 10px; }
-/* Bottom-anchored chat: log sits above the input and grows upward as lines
-   are added, so the input field stays put at the fixed bottom position. */
-#chatWrap.chat-bottom-left #chatLog, #chatWrap.chat-bottom-right #chatLog { order: 1; margin-bottom: 6px; }
-#chatWrap.chat-bottom-left #chatInput, #chatWrap.chat-bottom-right #chatInput { order: 2; }
-/* Top-anchored chat: input sits above the log, which grows downward. */
-#chatWrap.chat-top-left #chatInput, #chatWrap.chat-top-right #chatInput { order: 1; margin-bottom: 6px; }
-#chatWrap.chat-top-left #chatLog, #chatWrap.chat-top-right #chatLog { order: 2; }
-#chatLog {
-  display: flex; flex-direction: column; gap: 1px; pointer-events: none;
-  background: rgba(0,0,0,var(--chat-opacity)); padding: 6px 8px; max-height: 44vh; overflow: hidden;
-}
-#chatLog:empty { display: none; padding: 0; }
-#chatLog div { color: #fff; font-size: 14px; text-shadow: 1px 1px 0 #000; word-break: break-word; }
-#chatInput { display: none; width: 100%; box-sizing: border-box; background: rgba(0,0,0,.5); border: 1px solid #fff; color: #fff; font: 14px 'Courier New', monospace; padding: 5px 6px; outline: none; }
-#chatInput.show { display: block; }
+#chatWrap { position: fixed; inset: 0; z-index: 15; pointer-events: none; --chat-bg: .5; }
+#chatLog { position: absolute; inset: 0; }
+.chat-line { position: absolute; display: none; width: calc(332px * var(--s)); height: calc(9px * var(--s)); box-sizing: border-box; line-height: 0; }
+.chat-line canvas { position: absolute; left: calc(2px * var(--s)); top: calc(1px * var(--s)); image-rendering: pixelated; }
+.chat-sb { position: absolute; display: none; }
+#chatBox { position: absolute; display: none; left: calc(2px * var(--s)); right: calc(2px * var(--s)); bottom: calc(2px * var(--s)); height: calc(12px * var(--s)); background: rgba(0,0,0,.502); pointer-events: auto; }
+#chatBox.chat-box-top { bottom: auto; top: calc(2px * var(--s)); }
+#chatBox.show { display: block; }
+#chatInput { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; opacity: 0; outline: none; cursor: text; }
+#chatView { position: absolute; left: calc(2px * var(--s)); top: calc(4px * var(--s)); right: calc(-2px * var(--s)); height: calc(8px * var(--s)); overflow-x: clip; overflow-y: visible; pointer-events: none; line-height: 0; white-space: nowrap; }
+.chat-sel { position: absolute; top: calc(-1px * var(--s)); height: calc(10px * var(--s)); background: #0000ff; mix-blend-mode: difference; }
+.chat-caret { position: absolute; top: calc(-1px * var(--s)); width: calc(1px * var(--s)); height: calc(10px * var(--s)); background: #d0d0d0; }

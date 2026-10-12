@@ -109,3 +109,116 @@ export function setPixelText(el, str, scale = 2, color = '#e0e0e0', shadow = tru
   el.appendChild(c)
   return c
 }
+
+const FORMAT_COLORS = {
+  '0': '#000000', '1': '#0000aa', '2': '#00aa00', '3': '#00aaaa',
+  '4': '#aa0000', '5': '#aa00aa', '6': '#ffaa00', '7': '#aaaaaa',
+  '8': '#555555', '9': '#5555ff', a: '#55ff55', b: '#55ffff',
+  c: '#ff5555', d: '#ff55ff', e: '#ffff55', f: '#ffffff'
+}
+
+export function parseStyled(str, baseColor = '#ffffff') {
+  const out = []
+  let color = baseColor
+  let bold = false
+  let italic = false
+  let underline = false
+  let strike = false
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i]
+    if (ch === '\u00a7' && i + 1 < str.length) {
+      const k = str[i + 1].toLowerCase()
+      if (FORMAT_COLORS[k]) {
+        color = FORMAT_COLORS[k]
+        bold = italic = underline = strike = false
+        i++
+        continue
+      }
+      if (k === 'r') {
+        color = baseColor
+        bold = italic = underline = strike = false
+        i++
+        continue
+      }
+      if (k === 'l') { bold = true; i++; continue }
+      if (k === 'o') { italic = true; i++; continue }
+      if (k === 'n') { underline = true; i++; continue }
+      if (k === 'm') { strike = true; i++; continue }
+      if (k === 'k') { i++; continue }
+    }
+    out.push({ ch, color, bold, italic, underline, strike })
+  }
+  return out
+}
+
+function glyphAdvance(g, w) {
+  return w[g.ch.charCodeAt(0) & 255] + (g.bold ? 1 : 0)
+}
+
+export function glyphsWidth(glyphs) {
+  const w = widths()
+  let total = 0
+  for (const g of glyphs) total += glyphAdvance(g, w)
+  return total
+}
+
+export function styledWidth(str) {
+  return glyphsWidth(parseStyled(str))
+}
+
+let styledBuf = null
+
+export function makeGlyphCanvas(glyphs, shadow = true, opacity = 1) {
+  const image = img('font', 'ascii')
+  const w = widths()
+  const pad = 2
+  const width = glyphsWidth(glyphs) + pad * 2 + (shadow ? 1 : 0)
+  const height = 10 + (shadow ? 1 : 0)
+  const c = document.createElement('canvas')
+  c.width = Math.max(1, width)
+  c.height = height
+  const ctx = c.getContext('2d')
+  ctx.imageSmoothingEnabled = false
+  if (!styledBuf) {
+    styledBuf = document.createElement('canvas')
+    styledBuf.width = CELL
+    styledBuf.height = CELL
+  }
+  const gctx = styledBuf.getContext('2d')
+  const pass = (ox, oy, isShadow) => {
+    let cx = pad + ox
+    for (const g of glyphs) {
+      const code = g.ch.charCodeAt(0) & 255
+      const adv = glyphAdvance(g, w)
+      const col = isShadow ? shadeColor(g.color) : g.color
+      if (g.ch !== ' ') {
+        const sx = (code % COLS) * CELL
+        const sy = Math.floor(code / COLS) * CELL
+        gctx.clearRect(0, 0, CELL, CELL)
+        gctx.globalCompositeOperation = 'source-over'
+        gctx.drawImage(image, sx, sy, CELL, CELL, 0, 0, CELL, CELL)
+        gctx.globalCompositeOperation = 'source-in'
+        gctx.fillStyle = col
+        gctx.fillRect(0, 0, CELL, CELL)
+        const draw = (dx) => {
+          ctx.save()
+          if (g.italic) ctx.transform(1, 0, -0.25, 1, cx + dx + 1, oy)
+          else ctx.translate(cx + dx, oy)
+          ctx.drawImage(styledBuf, 0, 0)
+          ctx.restore()
+        }
+        draw(0)
+        if (g.bold) draw(1)
+      }
+      if (g.underline || g.strike) {
+        ctx.fillStyle = col
+        if (g.underline) ctx.fillRect(cx - 1, oy + 8, adv + 1, 1)
+        if (g.strike) ctx.fillRect(cx - 1, oy + 4, adv + 1, 1)
+      }
+      cx += adv
+    }
+  }
+  if (shadow) pass(1, 1, true)
+  pass(0, 0, false)
+  return c
+}

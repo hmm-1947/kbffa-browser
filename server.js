@@ -5,7 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocketServer } from 'ws'
 import { Game } from './src/game.js'
-import sky from './src/maps/sky.js'
+import nik from './src/maps/nik.js'
 
 const root = path.dirname(fileURLToPath(import.meta.url))
 const statsPath = path.join(root, 'data', 'stats.json')
@@ -25,7 +25,7 @@ const saveStats = () => {
   }, 250)
 }
 
-const maps = serverNames.map((name, index) => ({ id: `fruit-${index}`, name, game: new Game({ ...sky, name }) }))
+const maps = serverNames.map((name, index) => ({ id: `fruit-${index}`, name, game: Object.assign(new Game({ ...nik, name }), { queuedInput: true }) }))
 const clients = new Map()
 const publicStats = (name) => playerStats(name)
 const serialize = (game) => ({
@@ -45,7 +45,9 @@ const serialize = (game) => ({
     prevYaw: p.prevYaw, prevPitch: p.prevPitch, alive: p.alive, sneaking: p.sneaking,
     sprinting: p.sprinting, slot: p.slot, pearls: p.pearls, arrows: p.arrows, kills: p.kills,
     deaths: p.deaths, hurtAnim: p.hurtAnim, swingTick: p.swingTick, onGround: p.onGround, stats: p.stats,
-    pingAt: p.pingAt ?? null
+    pingAt: p.pingAt ?? null,
+    inputAck: p.inputAck, placeAck: p.placeAck,
+    sim: { ws: p.wantSprint, jt: p.jumpTicks, hc: p.hCollide }
   })),
   events: game.events
 })
@@ -85,25 +87,32 @@ wss.on('connection', (ws) => {
     if (!session) return
     const p = session.player
     if (m.type === 'input') {
-      p.input.fwd = Math.max(-1, Math.min(1, Number(m.fwd) || 0))
-      p.input.strafe = Math.max(-1, Math.min(1, Number(m.strafe) || 0))
-      p.input.jump = !!m.jump; p.input.sneak = !!m.sneak
-      p.yaw = Number.isFinite(m.yaw) ? m.yaw : p.yaw
-      p.pitch = Number.isFinite(m.pitch) ? Math.max(-Math.PI / 2, Math.min(Math.PI / 2, m.pitch)) : p.pitch
-      if (Number.isInteger(m.slot) && m.slot >= 0 && m.slot < 9) session.map.game.setSlot(p, m.slot)
-      if (m.stopSprint) p.wantSprint = false
-      if (m.sprint) p.act.sprintTap = true
+      const num = (v, d) => (Number.isFinite(v) ? v : d)
+      const t = m.target
+      const rec = {
+        seq: Number.isInteger(m.seq) ? m.seq : p.inputAck + 1,
+        fwd: Math.max(-1, Math.min(1, num(m.fwd, 0))),
+        strafe: Math.max(-1, Math.min(1, num(m.strafe, 0))),
+        jump: !!m.jump,
+        sneak: !!m.sneak,
+        yaw: num(m.yaw, p.yaw),
+        pitch: Math.max(-Math.PI / 2, Math.min(Math.PI / 2, num(m.pitch, p.pitch))),
+        slot: Number.isInteger(m.slot) && m.slot >= 0 && m.slot < 9 ? m.slot : p.slot,
+        sprint: !!m.sprint,
+        stopSprint: !!m.stopSprint,
+        attack: !!m.attack,
+        useHeld: !!m.useHeld,
+        useClick: !!m.useClick,
+        placeSeq: Number.isInteger(m.placeSeq) ? m.placeSeq : p.placeSeq,
+        target: t && Number.isInteger(t.x) && Number.isInteger(t.y) && Number.isInteger(t.z)
+          ? { x: t.x, y: t.y, z: t.z, nx: Number.isInteger(t.nx) ? t.nx : 0, ny: Number.isInteger(t.ny) ? t.ny : 0, nz: Number.isInteger(t.nz) ? t.nz : 0 }
+          : null
+      }
+      if (p.queue.length >= 20) p.queue.shift()
+      p.queue.push(rec)
       if (Number.isFinite(m.pingAt)) p.pingAt = m.pingAt
     }
-    if (m.type === 'action') {
-      if (Number.isFinite(m.yaw)) p.yaw = m.yaw
-      if (Number.isFinite(m.pitch)) p.pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, m.pitch))
-      if (m.target && Number.isInteger(m.target.x) && Number.isInteger(m.target.y) && Number.isInteger(m.target.z)) p.actionTarget = m.target
-      else p.actionTarget = null
-      if (m.attack) p.act.attack = true
-      p.act.useHeld = !!m.useHeld
-    }
-    if (m.type === 'chat' && typeof m.text === 'string') session.map.game.command(m.text.slice(0, 100))
+    if (m.type === 'chat' && typeof m.text === 'string') session.map.game.command(m.text.slice(0, 256), session.player.id)
   })
   ws.on('close', () => { const s = clients.get(ws); if (s) s.map.game.removePlayer(s.player.id); clients.delete(ws) })
 })

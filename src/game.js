@@ -49,6 +49,10 @@ export class Player {
     this.ping = 0
     this.pingAt = null
     this.respawnAt = 0
+    this.queue = []
+    this.inputAck = 0
+    this.placeSeq = 0
+    this.placeAck = 0
   }
 
   eye() {
@@ -76,6 +80,7 @@ export class Game {
     this.nextId = 1
     this.nextEntityId = 1
     this.botsEnabled = true
+    this.queuedInput = false
   }
 
   addPlayer(name, isBot = false) {
@@ -92,6 +97,8 @@ export class Game {
   setSlot(p, n) {
     p.slot = n
     p.bowTicks = -1
+    p.act.usePending = false
+    p.pendingTarget = null
   }
 
   respawn(p) {
@@ -124,12 +131,26 @@ export class Game {
     this.time++
     for (const p of this.players.values()) {
       if (!p.alive) {
+        if (p.queue.length) {
+          p.inputAck = p.queue[p.queue.length - 1].seq
+          p.queue.length = 0
+        }
         if (this.time >= p.respawnAt) this.respawn(p)
         continue
       }
       Object.assign(p.prev, p.pos)
       p.prevYaw = p.yaw
       p.prevPitch = p.pitch
+      if (this.queuedInput && !p.isBot) {
+        let n = p.queue.length > 4 ? 2 : 1
+        while (n-- > 0 && p.queue.length && p.alive) {
+          this.applyInput(p, p.queue.shift())
+          this.actions(p)
+          this.move(p)
+          if (p.pos.y < C.VOID_Y) this.kill(p)
+        }
+        continue
+      }
       if (p.isBot) this.think(p)
       this.actions(p)
       this.move(p)
@@ -139,6 +160,28 @@ export class Game {
     this.updateArrows()
     this.updatePearls()
     this.expire()
+  }
+
+  applyInput(p, r) {
+    const i = p.input
+    i.fwd = r.fwd
+    i.strafe = r.strafe
+    i.jump = r.jump
+    i.sneak = r.sneak
+    p.yaw = r.yaw
+    p.pitch = r.pitch
+    if (r.slot !== p.slot) this.setSlot(p, r.slot)
+    if (r.stopSprint) p.wantSprint = false
+    if (r.sprint) p.act.sprintTap = true
+    if (r.attack) p.act.attack = true
+    p.actionTarget = r.target
+    if (r.useClick) {
+      p.act.usePending = true
+      p.pendingTarget = r.target
+    }
+    p.act.useHeld = r.useHeld
+    p.placeSeq = r.placeSeq
+    p.inputAck = r.seq
   }
 
   think(p) {
@@ -191,9 +234,15 @@ export class Game {
       }
     } else {
       p.bowTicks = -1
-      if (a.useHeld && p.useDelay === 0) {
+      let waiting = (a.useHeld || a.usePending) && p.useDelay > 0
+      if ((a.useHeld || a.usePending) && p.useDelay === 0) {
+        if (a.usePending && p.pendingTarget) p.actionTarget = p.pendingTarget
+        a.usePending = false
+        p.pendingTarget = null
         if (type === 'block') {
           p.useDelay = 4
+          waiting = false
+          p.placeAck = p.placeSeq
           if (this.placeBlock(p)) p.swingTick = this.time
         } else if (type === 'pearl') {
           p.useDelay = 4
@@ -203,6 +252,7 @@ export class Game {
           this.placePlate(p)
         }
       }
+      if (type !== 'block' || !waiting) p.placeAck = p.placeSeq
     }
   }
 
@@ -333,8 +383,21 @@ export class Game {
     const hit = raycastBlocks(this.world, e.x, e.y, e.z, d.x, d.y, d.z, C.REACH_BLOCK)
     const claimed = p.actionTarget
     p.actionTarget = null
-    if (hit && claimed && hit.x === claimed.x && hit.y === claimed.y && hit.z === claimed.z) return hit
-    return hit
+    if (!claimed) return hit
+    const nx = claimed.nx | 0
+    const ny = claimed.ny | 0
+    const nz = claimed.nz | 0
+    if (Math.abs(nx) + Math.abs(ny) + Math.abs(nz) !== 1) return hit
+    if (hit && hit.x === claimed.x && hit.y === claimed.y && hit.z === claimed.z) return { ...hit, nx, ny, nz }
+    if (!this.world.isSolid(claimed.x, claimed.y, claimed.z)) return hit
+    const cx = claimed.x + 0.5 - e.x
+    const cy = claimed.y + 0.5 - e.y
+    const cz = claimed.z + 0.5 - e.z
+    const dist = Math.hypot(cx, cy, cz)
+    if (dist > C.REACH_BLOCK + 1.0) return hit
+    const los = raycastBlocks(this.world, e.x, e.y, e.z, cx / dist, cy / dist, cz / dist, dist + 0.5)
+    if (!los || los.x !== claimed.x || los.y !== claimed.y || los.z !== claimed.z) return hit
+    return { x: claimed.x, y: claimed.y, z: claimed.z, nx, ny, nz, t: dist }
   }
 
   breakBlock(p) {
@@ -613,8 +676,15 @@ export class Game {
     return `Bot${n}`
   }
 
-  command(text) {
-    const parts = text.trim().split(/\s+/)
+  command(text, pid) {
+    const msg = String(text).trim().replace(/\u00a7/g, '')
+    if (!msg) return
+    if (msg[0] !== '/') {
+      const who = this.players.get(pid)
+      this.events.push({ type: 'chat', text: `<${who ? who.name : 'Player'}> ${msg}` })
+      return
+    }
+    const parts = msg.split(/\s+/)
     const cmd = (parts[0] || '').toLowerCase()
     if (cmd === '/bot') {
       const arg = (parts[1] || '').toLowerCase()
@@ -636,6 +706,7 @@ export class Game {
       }
       return
     }
-    this.events.push({ type: 'chat', text: `Unknown command: ${cmd}` })
+    this.events.push({ type: 'chat', text: '\u00a7cUnknown or incomplete command, see below for error' })
+    this.events.push({ type: 'chat', text: `\u00a7c\u00a7n${msg.slice(1)}\u00a7r\u00a7c\u00a7o<--[HERE]` })
   }
 }

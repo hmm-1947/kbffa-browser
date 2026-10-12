@@ -234,77 +234,61 @@ async fn handle_message(server: &Arc<Server>, conn_id: u64, tx: &mpsc::Unbounded
     };
 
     if mtype == "input" {
-        let fwd = m.get("fwd").and_then(|v| v.as_f64()).unwrap_or(0.0).clamp(-1.0, 1.0);
-        let strafe = m.get("strafe").and_then(|v| v.as_f64()).unwrap_or(0.0).clamp(-1.0, 1.0);
-        p.input.fwd = fwd;
-        p.input.strafe = strafe;
-        p.input.jump = m.get("jump").and_then(|v| v.as_bool()).unwrap_or(false);
-        p.input.sneak = m.get("sneak").and_then(|v| v.as_bool()).unwrap_or(false);
-        if let Some(yaw) = m.get("yaw").and_then(|v| v.as_f64()) {
-            if yaw.is_finite() {
-                p.yaw = yaw;
-            }
-        }
-        if let Some(pitch) = m.get("pitch").and_then(|v| v.as_f64()) {
-            if pitch.is_finite() {
-                p.pitch = pitch.clamp(-std::f64::consts::PI / 2.0, std::f64::consts::PI / 2.0);
-            }
-        }
-        if let Some(slot) = m.get("slot").and_then(|v| v.as_i64()) {
-            if (0..9).contains(&slot) {
-                let n = slot as usize;
-                drop(g);
-                g = map.game.lock().await;
-                g.set_slot(player_id, n);
-            }
-        }
-        if m.get("stopSprint").and_then(|v| v.as_bool()).unwrap_or(false) {
-            if let Some(p) = g.players.get_mut(&player_id) {
-                p.want_sprint = false;
-            }
-        }
-        if m.get("sprint").and_then(|v| v.as_bool()).unwrap_or(false) {
-            if let Some(p) = g.players.get_mut(&player_id) {
-                p.act.sprint_tap = true;
-            }
-        }
-    }
-
-    if mtype == "action" {
-        if let Some(p) = g.players.get_mut(&player_id) {
-            if let Some(yaw) = m.get("yaw").and_then(|v| v.as_f64()) {
-                if yaw.is_finite() {
-                    p.yaw = yaw;
+        let num = |k: &str, d: f64| m.get(k).and_then(|v| v.as_f64()).filter(|v| v.is_finite()).unwrap_or(d);
+        let flag = |k: &str| m.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+        let int = |k: &str| m.get(k).and_then(|v| v.as_i64());
+        let target = match m.get("target") {
+            Some(t) if t.is_object() => {
+                let c = |k: &str| t.get(k).and_then(|v| v.as_i64());
+                match (c("x"), c("y"), c("z")) {
+                    (Some(x), Some(y), Some(z)) => Some(game::BlockTarget {
+                        x: x as i32,
+                        y: y as i32,
+                        z: z as i32,
+                        nx: c("nx").unwrap_or(0) as i32,
+                        ny: c("ny").unwrap_or(0) as i32,
+                        nz: c("nz").unwrap_or(0) as i32,
+                    }),
+                    _ => None,
                 }
             }
-            if let Some(pitch) = m.get("pitch").and_then(|v| v.as_f64()) {
-                if pitch.is_finite() {
-                    p.pitch = pitch.clamp(-std::f64::consts::PI / 2.0, std::f64::consts::PI / 2.0);
-                }
+            _ => None,
+        };
+        let half_pi = std::f64::consts::PI / 2.0;
+        let rec = game::InputRec {
+            seq: int("seq").unwrap_or(p.input_ack + 1),
+            fwd: num("fwd", 0.0).clamp(-1.0, 1.0),
+            strafe: num("strafe", 0.0).clamp(-1.0, 1.0),
+            jump: flag("jump"),
+            sneak: flag("sneak"),
+            yaw: num("yaw", p.yaw),
+            pitch: num("pitch", p.pitch).clamp(-half_pi, half_pi),
+            slot: match int("slot") {
+                Some(s) if (0..9).contains(&s) => s as usize,
+                _ => p.slot,
+            },
+            sprint: flag("sprint"),
+            stop_sprint: flag("stopSprint"),
+            attack: flag("attack"),
+            use_held: flag("useHeld"),
+            use_click: flag("useClick"),
+            place_seq: int("placeSeq").unwrap_or(p.place_seq),
+            target,
+        };
+        if p.queue.len() >= 20 {
+            p.queue.pop_front();
+        }
+        p.queue.push_back(rec);
+        if let Some(t) = m.get("pingAt").and_then(|v| v.as_f64()) {
+            if t.is_finite() {
+                p.ping_at = Some(t);
             }
-            let target = m.get("target");
-            p.action_target = match target {
-                Some(t) if t.is_object() => {
-                    let x = t.get("x").and_then(|v| v.as_i64());
-                    let y = t.get("y").and_then(|v| v.as_i64());
-                    let z = t.get("z").and_then(|v| v.as_i64());
-                    match (x, y, z) {
-                        (Some(x), Some(y), Some(z)) => Some(game::BlockTarget { x: x as i32, y: y as i32, z: z as i32 }),
-                        _ => None,
-                    }
-                }
-                _ => None,
-            };
-            if m.get("attack").and_then(|v| v.as_bool()).unwrap_or(false) {
-                p.act.attack = true;
-            }
-            p.act.use_held = m.get("useHeld").and_then(|v| v.as_bool()).unwrap_or(false);
         }
     }
 
     if mtype == "chat" {
         if let Some(text) = m.get("text").and_then(|v| v.as_str()) {
-            let truncated: String = text.chars().take(100).collect();
+            let truncated: String = text.chars().take(256).collect();
             g.command(player_id, &truncated);
         }
     }

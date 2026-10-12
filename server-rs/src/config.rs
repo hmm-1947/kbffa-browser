@@ -1,11 +1,11 @@
 pub const TPS: u64 = 20;
 pub const TICK_MS: u64 = 1000 / TPS;
 
-pub const WORLD_SX: i32 = 96;
+pub const WORLD_SX: i32 = 192;
 pub const WORLD_SY: i32 = 160;
-pub const WORLD_SZ: i32 = 96;
-pub const WORLD_OX: i32 = 48;
-pub const WORLD_OZ: i32 = 48;
+pub const WORLD_SZ: i32 = 192;
+pub const WORLD_OX: i32 = 96;
+pub const WORLD_OZ: i32 = 96;
 
 pub const JUMP_VY: f64 = 0.42;
 pub const REACH_ATTACK: f64 = 3.0;

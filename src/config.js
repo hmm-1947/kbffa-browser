@@ -1,6 +1,6 @@
 export const CONFIG = {
   TPS: 20,
-  WORLD: { sx: 96, sy: 160, sz: 96, ox: 48, oz: 48 },
+  WORLD: { sx: 192, sy: 160, sz: 192, ox: 96, oz: 96 },
   JUMP_VY: 0.42,
   REACH_ATTACK: 3.0,
   REACH_BLOCK: 5.0,

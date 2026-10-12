@@ -23,11 +23,11 @@ export class World {
   set(x, y, z, id) {
     if (!this.inBounds(x, y, z)) return false
     const i = (y * this.sz + (z + this.oz)) * this.sx + (x + this.ox)
-    // Re-setting the same id must not dirty chunks: each dirty chunk is fully
-    // re-meshed, which caused frame hitches when snapshots re-confirmed blocks.
-    if (this.data[i] === id) return true
+    const old = this.data[i]
+    if (old === id) return true
     this.data[i] = id
     this.mark(x, y, z)
+    if (this.onSet) this.onSet(x, y, z, old, id)
     return true
   }
 
@@ -38,18 +38,13 @@ export class World {
   mark(x, y, z) {
     const ix = x + this.ox
     const iz = z + this.oz
-    const cx = ix >> 4
-    const cy = y >> 4
-    const cz = iz >> 4
-    this.dirty.add(`${cx},${cy},${cz}`)
-    const lx = ix & 15
-    const ly = y & 15
-    const lz = iz & 15
-    if (lx === 0) this.dirty.add(`${cx - 1},${cy},${cz}`)
-    if (lx === 15) this.dirty.add(`${cx + 1},${cy},${cz}`)
-    if (ly === 0) this.dirty.add(`${cx},${cy - 1},${cz}`)
-    if (ly === 15) this.dirty.add(`${cx},${cy + 1},${cz}`)
-    if (lz === 0) this.dirty.add(`${cx},${cy},${cz - 1}`)
-    if (lz === 15) this.dirty.add(`${cx},${cy},${cz + 1}`)
+    const cx1 = Math.min((ix + 1) >> 4, (this.sx - 1) >> 4)
+    const cy1 = Math.min((y + 1) >> 4, (this.sy - 1) >> 4)
+    const cz1 = Math.min((iz + 1) >> 4, (this.sz - 1) >> 4)
+    for (let cx = Math.max((ix - 1) >> 4, 0); cx <= cx1; cx++) {
+      for (let cy = Math.max((y - 1) >> 4, 0); cy <= cy1; cy++) {
+        for (let cz = Math.max((iz - 1) >> 4, 0); cz <= cz1; cz++) this.dirty.add(`${cx},${cy},${cz}`)
+      }
+    }
   }
 }

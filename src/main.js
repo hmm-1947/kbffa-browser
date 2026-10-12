@@ -3,14 +3,15 @@ import { CONFIG as C } from './config.js'
 import { ID } from './blocks.js'
 import { loadTextures, buildAtlas, img, makeTexture } from './textures.js'
 import { Game } from './game.js'
-import sky from './maps/sky.js'
+import nik from './maps/nik.js'
 import { buildChunk, blockCubeGeometry } from './mesher.js'
 import { extrudeSprite, buildPlayerModel, buildFirstPersonArm, vertexMaterial } from './models.js'
 import { Hud, maxGuiScale } from './hud.js'
+import { SkyLight } from './light.js'
 import { raycastBlocks } from './raycast.js'
 import { overlapsSolid, playerBox } from './physics.js'
 import { settings, saveSettings, resetSettings, DEFAULT_KEYBINDS, ACTION_LABELS, keyLabel, CHAT_POSITIONS } from './settings.js'
-import { setPixelText, makeBitmapTextCanvas } from './bitmapfont.js'
+import { setPixelText, makeBitmapTextCanvas, textWidth, parseStyled, glyphsWidth, makeGlyphCanvas } from './bitmapfont.js'
 import { playSound } from './sounds.js'
 
 const lerp = (a, b, t) => a + (b - a) * t
@@ -24,10 +25,11 @@ const lerpAngle = (a, b, t) => {
 async function main() {
   await loadTextures()
   const atlas = buildAtlas()
-  const game = new Game(sky)
+  const game = new Game(nik)
   const local = game.addPlayer('Player')
   for (let i = 0; i < C.BOTS; i++) game.addPlayer(`Bot${i + 1}`, true)
   const world = game.world
+  new SkyLight(world)
 
   const canvas = document.getElementById('c')
   document.addEventListener('click', (e) => {
@@ -59,7 +61,7 @@ async function main() {
   })
   // The grass side overlay contains transparent pixels.  Discard them so its
   // grayscale RGB data never covers the dirt layer below it.
-  const chunkMat = new THREE.MeshBasicMaterial({ map: atlas.texture, vertexColors: true, alphaTest: 0.5 })
+  const chunkMat = new THREE.MeshBasicMaterial({ map: atlas.texture, vertexColors: true, alphaTest: 0.5, side: THREE.DoubleSide })
   const chunks = new Map()
   const syncChunks = () => {
     if (!world.dirty.size) return
@@ -288,20 +290,42 @@ async function main() {
     held[key] = g
   }
   const tool = (name) => new THREE.Mesh(extrudeSprite(img('items', name)), spriteMat)
-  const spriteDisplay = display([1.13, 3.2, 1.13], [0, -90, 0], 0.98)
-  // Keep the stick prominent in the lower-right hand pose, comparable to
-  // Minecraft's large first-person held-item presentation.
-  const stickDisplay = display([1.13, 3.2, 1.13], [0, -90, 0], 0.9)
-  addHeld('stick', tool('stick'), stickDisplay)
+  const spriteDisplay = display([1.13, 3.2, 1.13], [0, -90, 25], 0.68)
+  const blockDisplay = display([0, 0, 0], [0, 45, 0], 0.4)
+  const thinBlockDisplay = display([0, 4.2, 0], [0, 45, 0], 0.4)
+  addHeld('stick', tool('stick'), spriteDisplay)
   addHeld('bow-1', tool('bow_standby'), spriteDisplay)
   for (let i = 0; i < 3; i++) addHeld(`bow${i}`, tool(`bow_pulling_${i}`), spriteDisplay)
   addHeld('pearl', tool('ender_pearl'), spriteDisplay)
-  addHeld('plate', tool('gold_pressure_plate'), spriteDisplay)
+  const heldPlateGeo = new THREE.BoxGeometry(14 / 16, 1 / 16, 14 / 16)
+  {
+    const side = [1, 15, 15, 16]
+    const flat = [1, 1, 15, 15]
+    const rects = [side, side, flat, flat, side, side]
+    const uv = heldPlateGeo.attributes.uv
+    rects.forEach(([x0, y0, x1, y1], f) => {
+      uv.setXY(f * 4, x0 / 16, 1 - y0 / 16)
+      uv.setXY(f * 4 + 1, x1 / 16, 1 - y0 / 16)
+      uv.setXY(f * 4 + 2, x0 / 16, 1 - y1 / 16)
+      uv.setXY(f * 4 + 3, x1 / 16, 1 - y1 / 16)
+    })
+    const n = heldPlateGeo.attributes.normal
+    const colors = []
+    for (let i = 0; i < n.count; i++) {
+      const shade = n.getY(i) > 0.5 ? 1 : n.getY(i) < -0.5 ? 0.5 : Math.abs(n.getZ(i)) > 0.5 ? 0.8 : 0.6
+      const c = Math.pow(shade, 2.2)
+      colors.push(c, c, c)
+    }
+    heldPlateGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+    heldPlateGeo.translate(0, 0.5 / 16 - 0.5, 0)
+  }
+  const heldPlateMat = new THREE.MeshBasicMaterial({ map: makeTexture('blocks', 'gold_block'), vertexColors: true })
+  addHeld('plate', new THREE.Mesh(heldPlateGeo, heldPlateMat), thinBlockDisplay)
   const blockDef = C.HOTBAR.find((s) => s.type === 'block')
   const cube = new THREE.Mesh(blockCubeGeometry(atlas, ID[blockDef.block]), chunkMat)
-  addHeld('block', cube, display([0, 0, 0], [0, 45, 0], 0.4))
+  addHeld('block', cube, blockDisplay)
 
-  const armModel = chain(mt(-5 / 16, 2 / 16, 0), new M4().makeRotationZ(0.1), mrx(180), mt(0, 2 / 16, 0), msc(2 / 1.8, 2 / 1.8, 2 / 1.8))
+  const armModel = chain(mt(-5 / 16, 2 / 16, 0), new M4().makeRotationZ(0.1), mrx(180), mt(-1 / 16, 2 / 16, 0), msc(2 / 1.8, 2 / 1.8, 2 / 1.8))
   const handState = { tick: 0, h: 1, oh: 1, shown: undefined, bob: 0, oBob: 0, walk: 0, oWalk: 0, xb: 0, oxb: 0, yb: 0, oyb: 0, init: false }
   const wrapDeg = (a) => ((((a + 180) % 360) + 360) % 360) - 180
   const handKey = () => {
@@ -361,14 +385,7 @@ async function main() {
     itemRig.visible = shown !== null && shown !== 'empty'
     if (shown === null) return
     const pi = Math.PI
-    // The vanilla first-person pose constants are authored for a 16:9 view.
-    // Scale their horizontal offsets so the hand stays in frame on narrower
-    // windows instead of disappearing beyond the right edge.
-    const handX = (x) => x * camera.aspect / (16 / 9)
-    // Sprint widens the world camera FOV.  Apply the inverse projection ratio
-    // to the viewmodel so the hand remains attached at the same screen-space
-    // point while the world FOV animates.
-    const handScale = Math.tan(settings.fov * D2R / 2) / Math.tan(camera.fov * D2R / 2)
+    const handScale = Math.tan(70 * D2R / 2) / Math.tan(camera.fov * D2R / 2)
     const invH = 1 - lerp(st.oh, st.h, alpha)
     const bd = -lerp(st.oWalk, st.walk, alpha)
     const bob = lerp(st.oBob, st.bob, alpha)
@@ -388,7 +405,7 @@ async function main() {
     // previously it was only assigned for an empty slot, leaving a visible arm
     // at the camera origin whenever an item was selected.
     const armM = m.clone()
-    armM.multiply(mt(handX(-0.3 * Math.sin(sq * pi) + 0.64000005), 0.4 * Math.sin(sq * pi * 2) - 0.6 + invH * -0.6, -0.4 * Math.sin(a * pi) - 0.71999997))
+    armM.multiply(mt(-0.3 * Math.sin(sq * pi) + 0.64000005, 0.4 * Math.sin(sq * pi * 2) - 0.6 + invH * -0.6, -0.4 * Math.sin(a * pi) - 0.71999997))
     armM.multiply(mry(45)).multiply(mry(Math.sin(sq * pi) * 70)).multiply(mrz(Math.sin(a * a * pi) * -20))
     armM.multiply(mt(-1, 3.6, 3.5)).multiply(mrz(120)).multiply(mrx(200)).multiply(mry(-135)).multiply(mt(5.6, 0, 0))
     arm.matrix.copy(armM.multiply(armModel))
@@ -396,22 +413,8 @@ async function main() {
     if (shown === 'empty') {
       return
     }
-    // Item and arm share the same bob/FOV base pose.  Put the standard
-    // display origin into the palm (rather than above the knuckles); this is
-    // especially noticeable with the slim stick sprite.
-    // Keep long tools at the lower-right edge; their tall sprites otherwise
-    // read as centred even when smaller item types are correctly placed.
-    const isLongHeldItem = shown === 'stick' || handGroup(shown) === 'bow'
-    const lowerHeldItem = isLongHeldItem || shown === 'pearl'
-    const itemY = (shown === 'stick' ? -0.55 : -0.44) + (lowerHeldItem ? -0.18 : 0) + invH * -0.6
-    // Block sits a little further left than other items; the stick is pushed
-    // forward (away from the camera) so its whole length reads clearly.
-    const itemX = isLongHeldItem ? 1.15 : shown === 'block' ? 0.52 : 0.4
-    m.multiply(mt(handX(itemX), itemY, shown === 'stick' ? -0.86 : -0.72))
-    // Lean the tip of long tools (stick, bow) forward so it is not cut off by
-    // the top of the screen.
-    if (isLongHeldItem) m.multiply(mrx(-20))
     const bt = online ? visualBowTicks : local.bowTicks
+    m.multiply(mt(0.56, -0.52 + invH * -0.6, -0.72))
     if (handGroup(shown) === 'bow' && bt >= 0) {
       const th = bt + alpha
       let p = th / 20
@@ -420,7 +423,7 @@ async function main() {
       if (p > 0.1) m.multiply(mt(0, Math.sin((th - 0.1) * 1.3) * (p - 0.1) * 0.004, 0))
       m.multiply(mt(0, 0, p * 0.04)).multiply(msc(1, 1, 1 + p * 0.2)).multiply(mry(-45))
     } else {
-      m.multiply(mt(handX(-0.4 * Math.sin(sq * pi)), 0.2 * Math.sin(sq * pi * 2), -0.2 * Math.sin(a * pi)))
+      m.multiply(mt(-0.4 * Math.sin(sq * pi), 0.2 * Math.sin(sq * pi * 2), -0.2 * Math.sin(a * pi)))
       m.multiply(mry(45 + Math.sin(a * a * pi) * -20)).multiply(mrz(Math.sin(sq * pi) * -20)).multiply(mrx(Math.sin(sq * pi) * -80)).multiply(mry(-45))
     }
     itemRig.matrix.copy(m)
@@ -468,10 +471,13 @@ async function main() {
   const btnChatBR = document.getElementById('btnChatBR')
   const sldChatLen = document.getElementById('sldChatLen')
   const sldChatOpacity = document.getElementById('sldChatOpacity')
+  const sldChatTextOpacity = document.getElementById('sldChatTextOpacity')
   const controlsList = document.getElementById('controlsList')
   const chatWrap = document.getElementById('chatWrap')
   const chatLog = document.getElementById('chatLog')
   const chatInput = document.getElementById('chatInput')
+  const chatBox = document.getElementById('chatBox')
+  const chatView = document.getElementById('chatView')
 
   // Render all static menu text with Minecraft's own bitmap font (the same
   // ascii.png glyph atlas the game already uses for the HUD) instead of a
@@ -513,38 +519,203 @@ async function main() {
   let clientAnimationTick = 0
   let visualBowTicks = -1
   const networkBlocks = new Map()
+  const blockPredictions = []
+  const pendingInputs = []
+  let inputSeq = 0
+  let placeSeq = 0
   let lastNetworkSnapshot = performance.now()
   let previousNetworkPlayers = new Map()
 
   const serverList = document.getElementById('serverList')
   const playerName = document.getElementById('playerName')
+  const playerNameBox = document.getElementById('playerNameBox')
+  const playerNameView = document.getElementById('playerNameView')
   const joinServer = document.getElementById('joinServer')
-  const joinError = document.getElementById('joinError')
+  const refreshServers = document.getElementById('refreshServers')
   const statsButton = document.getElementById('statsButton')
-  const lobbyStats = document.getElementById('lobbyStats')
+  const joinErrorEl = document.getElementById('joinError')
+  const lobbyStatsEl = document.getElementById('lobbyStats')
   const formatStats = (st) => st ? `Kills: ${st.kills}\nDeaths: ${st.deaths}\nMax kill streak: ${st.maxKillStreak}\nDeath streak: ${st.deathStreak}\nPearls thrown: ${st.pearlsThrown}\nBlocks placed: ${st.blocksPlaced}` : ''
+  const mcText = (str, color = '#ffffff') => {
+    const c = makeBitmapTextCanvas(str, 1, color, true)
+    c.style.width = `calc(${c.width}px * var(--s))`
+    c.style.height = `calc(${c.height}px * var(--s))`
+    c.style.imageRendering = 'pixelated'
+    c.style.display = 'block'
+    return c
+  }
+  const mcSet = (el, str, color) => el.replaceChildren(mcText(str, color))
+  const joinError = {
+    set textContent(v) {
+      joinErrorEl.replaceChildren()
+      if (v) joinErrorEl.appendChild(mcText(v, '#ff5555'))
+    }
+  }
+  let lobbyStatsTimer = 0
+  const lobbyStats = {
+    set textContent(v) {
+      lobbyStatsEl.replaceChildren()
+      clearTimeout(lobbyStatsTimer)
+      if (!v) return lobbyStatsEl.classList.remove('show')
+      for (const line of v.split('\n')) {
+        const d = document.createElement('div')
+        d.className = 'sl-line'
+        d.appendChild(mcText(line))
+        lobbyStatsEl.appendChild(d)
+      }
+      lobbyStatsEl.classList.add('show')
+      lobbyStatsTimer = setTimeout(() => lobbyStatsEl.classList.remove('show'), 6000)
+    }
+  }
+  mcSet(document.getElementById('slTitle'), 'Play Multiplayer')
+  mcSet(joinServer, 'Join Server', '#e0e0e0')
+  mcSet(statsButton, 'Statistics', '#e0e0e0')
+  mcSet(refreshServers, 'Refresh', '#e0e0e0')
+  let caretOn = true
+  const renderName = () => {
+    const v = playerName.value
+    const focused = document.activeElement === playerName
+    playerNameBox.classList.toggle('focus', focused)
+    playerNameView.replaceChildren()
+    if (v) playerNameView.appendChild(mcText(v, '#e0e0e0'))
+    else playerNameView.appendChild(mcText('Player name', '#808080'))
+    if (focused && caretOn) {
+      const pos = playerName.selectionStart ?? v.length
+      const caret = document.createElement('div')
+      caret.className = 'sl-caret'
+      caret.style.left = `calc(${textWidth(v.slice(0, pos))}px * var(--s))`
+      if (pos >= v.length) {
+        caret.style.width = `calc(5px * var(--s))`
+        caret.style.height = `calc(1px * var(--s))`
+        caret.style.top = `calc(8px * var(--s))`
+      }
+      playerNameView.appendChild(caret)
+    }
+  }
+  try { playerName.value = localStorage.getItem('kbffa_name') || '' } catch {}
+  for (const ev of ['input', 'keyup', 'click', 'focus', 'blur', 'select']) playerName.addEventListener(ev, () => { caretOn = true; renderName() })
+  playerName.addEventListener('input', () => { try { localStorage.setItem('kbffa_name', playerName.value) } catch {} })
+  setInterval(() => { if (document.activeElement === playerName) { caretOn = !caretOn; renderName() } }, 500)
+  renderName()
+  let lastEntryClick = 0
+  const selectEntry = (id) => {
+    selectedServer = id
+    serverList.focus({ preventScroll: true })
+    for (const row of serverList.querySelectorAll('.sl-entry')) row.classList.toggle('selected', row.dataset.id === id)
+    joinServer.disabled = !selectedServer
+  }
+  const joinSelected = () => {
+    if (!selectedServer) return
+    if (!socket || socket.readyState !== WebSocket.OPEN) return (joinError.textContent = 'Connecting to server…')
+    socket.send(JSON.stringify({ type: 'join', server: selectedServer, name: playerName.value.trim() }))
+  }
   const drawServers = (servers) => {
     serverList.replaceChildren()
+    const inner = document.createElement('div')
+    inner.className = 'sl-inner'
+    if (selectedServer && !servers.some((s) => s.id === selectedServer)) selectedServer = null
     for (const server of servers) {
       const row = document.createElement('div')
-      row.className = 'server-entry' + (selectedServer === server.id ? ' selected' : '')
-      row.innerHTML = `<strong>${server.name}</strong><span>${server.players} player${server.players === 1 ? '' : 's'}</span>`
-      row.addEventListener('click', () => { selectedServer = server.id; drawServers(servers) })
-      serverList.appendChild(row)
+      row.className = 'sl-entry' + (selectedServer === server.id ? ' selected' : '')
+      row.dataset.id = server.id
+      const icon = document.createElement('div')
+      icon.className = 'sl-icon'
+      icon.innerHTML = '<div class="sl-join"></div><div class="sl-hot"></div>'
+      const name = document.createElement('div')
+      name.className = 'sl-name'
+      mcSet(name, server.name, '#ffffff')
+      const motd1 = document.createElement('div')
+      motd1.className = 'sl-motd'
+      motd1.style.top = 'calc(14px * var(--s))'
+      mcSet(motd1, 'Knockback FFA', '#808080')
+      const motd2 = document.createElement('div')
+      motd2.className = 'sl-motd'
+      motd2.style.top = 'calc(23px * var(--s))'
+      mcSet(motd2, 'Knock everyone into the void', '#808080')
+      const status = document.createElement('div')
+      status.className = 'sl-status'
+      status.style.right = 'calc(22px * var(--s))'
+      mcSet(status, `${server.players} player${server.players === 1 ? '' : 's'}`, '#808080')
+      const ping = document.createElement('div')
+      ping.className = 'sl-ping'
+      ping.style.backgroundImage = 'url(/textures/gui/server_list/ping_5.png)'
+      row.append(icon, name, motd1, motd2, status, ping)
+      row.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return
+        const r = icon.getBoundingClientRect()
+        const overJoin = e.clientX >= r.left + r.width / 2 && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom
+        const now = performance.now()
+        const double = selectedServer === server.id && now - lastEntryClick < 250
+        lastEntryClick = now
+        selectEntry(server.id)
+        if (overJoin || double) joinSelected()
+      })
+      inner.appendChild(row)
     }
-    if (!selectedServer && servers[0]) { selectedServer = servers[0].id; drawServers(servers) }
+    serverList.appendChild(inner)
+    joinServer.disabled = !selectedServer
+    layoutList()
   }
-  // Recent locally-predicted positions (one per client tick). The server's
-  // snapshot is always a few ticks old, so the right question for
-  // reconciliation is "is the server position on the path I predicted?",
-  // not "is it near where I am right now?" - the latter grows with
-  // speed x latency (0.6 blocks/tick while bunny hopping) and caused a snap
-  // back every snapshot.
-  const predHistory = []
-  const PRED_HISTORY_TICKS = 20
-  // When a server correction moves the local player, the camera glides from the
-  // old position to the new one instead of jumping, which removes the visible
-  // lagback/stutter on small corrections.
+  addEventListener('keydown', (e) => {
+    if (menu.style.display === 'none' || started) return
+    if (e.code === 'Enter' || e.code === 'NumpadEnter') return joinSelected()
+    if (e.code !== 'ArrowUp' && e.code !== 'ArrowDown') return
+    const rows = [...serverList.querySelectorAll('.sl-entry')]
+    if (!rows.length) return
+    const at = rows.findIndex((r) => r.dataset.id === selectedServer)
+    const next = e.code === 'ArrowDown' ? Math.min(rows.length - 1, at + 1) : Math.max(0, at < 0 ? 0 : at - 1)
+    selectEntry(rows[next].dataset.id)
+    rows[next].scrollIntoView({ block: "nearest" })
+    e.preventDefault()
+  })
+  joinServer.disabled = true
+  const slSb = document.getElementById('slScroll')
+  const slThumb = slSb.querySelector('.sl-sb-thumb')
+  const guiS = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--s')) || 1
+  const thumbH = (h, content) => Math.min(h - 8, Math.max(32, Math.floor(h * h / content)))
+  const layoutList = () => {
+    const s = guiS()
+    serverList.style.setProperty('--sl-bx', `${-(Math.ceil(innerWidth / s) % 32) * s}px`)
+    serverList.style.setProperty('--sl-by', `${-((Math.ceil(innerHeight / s) - 60) % 32) * s}px`)
+    const h = serverList.clientHeight / s
+    const content = serverList.scrollHeight / s
+    const max = Math.round(content - h)
+    slSb.classList.toggle('show', max > 0)
+    if (max <= 0) return
+    const bar = thumbH(h, content)
+    const y = Math.max(0, Math.floor(Math.floor(serverList.scrollTop / s) * (h - bar) / max))
+    slThumb.style.height = `calc(${bar}px * var(--s))`
+    slThumb.style.top = `calc(${y}px * var(--s))`
+  }
+  serverList.addEventListener('scroll', layoutList)
+  new ResizeObserver(layoutList).observe(serverList)
+  serverList.addEventListener('wheel', (e) => {
+    e.preventDefault()
+    serverList.scrollTop += Math.sign(e.deltaY) * 18 * guiS()
+  }, { passive: false })
+  let sbDragY = null
+  slSb.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    sbDragY = e.clientY
+    slSb.classList.add('drag')
+  })
+  addEventListener('mousemove', (e) => {
+    if (sbDragY === null) return
+    const s = guiS()
+    const r = serverList.getBoundingClientRect()
+    const max = serverList.scrollHeight - serverList.clientHeight
+    if (e.clientY < r.top) serverList.scrollTop = 0
+    else if (e.clientY > r.bottom) serverList.scrollTop = max
+    else {
+      const h = serverList.clientHeight / s
+      const bar = thumbH(h, serverList.scrollHeight / s)
+      serverList.scrollTop += (e.clientY - sbDragY) * Math.max(1, (max / s) / (h - bar))
+    }
+    sbDragY = e.clientY
+  })
+  addEventListener('mouseup', () => { sbDragY = null; slSb.classList.remove('drag') })
   const camOffset = { x: 0, y: 0, z: 0 }
   const addCamOffset = (from, to) => {
     const dx = from.x - to.x
@@ -558,61 +729,103 @@ async function main() {
     camOffset.y += dy
     camOffset.z += dz
   }
-  const distToPath = (pt, path) => {
-    let best = Infinity
-    for (let i = 0; i < path.length; i++) {
-      const a = path[i]
-      const b = path[i + 1] || a
-      const abx = b.x - a.x, aby = b.y - a.y, abz = b.z - a.z
-      const len2 = abx * abx + aby * aby + abz * abz
-      let t = len2 > 1e-12 ? ((pt.x - a.x) * abx + (pt.y - a.y) * aby + (pt.z - a.z) * abz) / len2 : 0
-      t = Math.max(0, Math.min(1, t))
-      const d = Math.hypot(pt.x - (a.x + abx * t), pt.y - (a.y + aby * t), pt.z - (a.z + abz * t))
-      if (d < best) best = d
-    }
-    return best
-  }
-  // Client-side block placement prediction. The authoritative placement only
-  // reaches the client one network round trip later; until then the local
-  // player kept falling through the gap while the server had already put a
-  // block under them, so every bridging step ended in a snap-back ("lagback").
-  // Placing the block locally right away keeps both simulations identical.
-  // Blocks the server never confirms are rolled back after a short grace.
-  const predictedBlocks = new Map()
-  const PREDICTED_BLOCK_GRACE_MS = 750
-  const predictPlace = () => {
-    if (!online || !local.alive || C.HOTBAR[local.slot]?.type !== 'block' || local.useDelay > 0) return
+  const predictPlace = (h) => {
     local.useDelay = 4
-    const e = local.eye()
-    const d = local.look()
-    const h = raycastBlocks(world, e.x, e.y, e.z, d.x, d.y, d.z, C.REACH_BLOCK)
-    if (!h) return
     const x = h.x + h.nx
     const y = h.y + h.ny
     const z = h.z + h.nz
     if (!game.canPlace(x, y, z) || game.isSpawnProtected({ x: x + 0.5, y, z: z + 0.5 })) return
+    placeSeq++
+    blockPredictions.push({ seq: placeSeq, key: `${x},${y},${z}`, at: performance.now() })
     world.set(x, y, z, ID[C.PLACE_BLOCK])
-    predictedBlocks.set(`${x},${y},${z}`, performance.now())
     local.swingTick = clientAnimationTick
   }
-  const reconcilePredictedBlocks = (confirmed) => {
-    const now = performance.now()
-    for (const [key, at] of predictedBlocks) {
-      if (confirmed.has(key)) predictedBlocks.delete(key)
-      else if (now - at > PREDICTED_BLOCK_GRACE_MS) {
-        predictedBlocks.delete(key)
-        const [x, y, z] = key.split(',').map(Number)
-        world.set(x, y, z, 0)
-      }
+  const reconcileLocal = (s, wasAlive) => {
+    if (!Number.isInteger(s.inputAck)) {
+      pendingInputs.length = 0
+      const gap = Math.hypot(local.pos.x - s.pos.x, local.pos.y - s.pos.y, local.pos.z - s.pos.z)
+      if (local.alive && wasAlive && gap < 0.6) return
+      if (wasAlive && local.alive) addCamOffset(local.pos, s.pos)
+      Object.assign(local.pos, s.pos)
+      Object.assign(local.prev, s.pos)
+      Object.assign(local.vel, s.vel)
+      return
     }
+    while (pendingInputs.length && pendingInputs[0].seq <= s.inputAck) pendingInputs.shift()
+    const sim = s.sim || {}
+    if (!local.alive) {
+      pendingInputs.length = 0
+      return
+    }
+    if (!wasAlive) {
+      pendingInputs.length = 0
+      Object.assign(local.pos, s.pos)
+      Object.assign(local.prev, s.pos)
+      Object.assign(local.vel, s.vel)
+      local.onGround = s.onGround
+      local.wantSprint = !!sim.ws
+      local.jumpTicks = sim.jt || 0
+      local.hCollide = !!sim.hc
+      return
+    }
+    const cur = {
+      pos: { ...local.pos },
+      vel: { ...local.vel },
+      onGround: local.onGround,
+      wantSprint: local.wantSprint,
+      sprinting: local.sprinting,
+      sneaking: local.sneaking,
+      jumpTicks: local.jumpTicks,
+      hCollide: local.hCollide,
+      stepDistance: local.stepDistance,
+      yaw: local.yaw,
+      input: { ...local.input },
+      tap: local.act.sprintTap
+    }
+    Object.assign(local.pos, s.pos)
+    Object.assign(local.vel, s.vel)
+    local.onGround = s.onGround
+    local.wantSprint = !!sim.ws
+    local.jumpTicks = sim.jt || 0
+    local.hCollide = !!sim.hc
+    const eventCount = game.events.length
+    for (const r of pendingInputs) {
+      Object.assign(local.prev, local.pos)
+      local.input.fwd = r.fwd
+      local.input.strafe = r.strafe
+      local.input.jump = r.jump
+      local.input.sneak = r.sneak
+      local.yaw = r.yaw
+      if (r.stopSprint) local.wantSprint = false
+      local.act.sprintTap = !!r.sprint
+      game.move(local)
+    }
+    game.events.length = eventCount
+    local.yaw = cur.yaw
+    Object.assign(local.input, cur.input)
+    local.act.sprintTap = cur.tap
+    local.stepDistance = cur.stepDistance
+    const error = Math.hypot(local.pos.x - cur.pos.x, local.pos.y - cur.pos.y, local.pos.z - cur.pos.z)
+    if (error < 0.03) {
+      Object.assign(local.pos, cur.pos)
+      Object.assign(local.vel, cur.vel)
+      local.onGround = cur.onGround
+      local.wantSprint = cur.wantSprint
+      local.sprinting = cur.sprinting
+      local.sneaking = cur.sneaking
+      local.jumpTicks = cur.jumpTicks
+      local.hCollide = cur.hCollide
+      return
+    }
+    addCamOffset(cur.pos, local.pos)
+    Object.assign(local.prev, local.pos)
   }
   const syncSnapshot = (snapshot) => {
     const receivedAt = performance.now()
     const seen = new Set()
     const oldPlayers = previousNetworkPlayers
     previousNetworkPlayers = new Map(snapshot.players.map((state) => [state.id, state]))
-    let authoritativeLocalPos = null
-    let authoritativeLocalVel = null
+    let localSync = null
     for (const state of snapshot.players) {
       let p = game.players.get(state.id)
       if (!p && state.id === local.id) p = local
@@ -624,71 +837,46 @@ async function main() {
       }
       seen.add(p.id)
       p.name = state.name
-      // Interpolate non-local players from their previous received state. The
-      // server tick's `prev` is not suitable here because it is only 50 ms
-      // behind its `pos` and arrives irregularly over the network.
       const prior = oldPlayers.get(state.id)
       if (p !== local) {
         Object.assign(p.pos, state.pos)
         Object.assign(p.prev, prior?.pos || state.pos)
         Object.assign(p.vel, state.vel)
       }
-      // Mouse look is predicted locally.  Applying its round-trip snapshot
-      // would pull the view back every server tick and makes turning vibrate.
       if (p === local) {
-        // Minecraft predicts its own movement, looking, sprinting and arm
-        // swing locally.  Never replay ordinary server snapshots over those
-        // values: doing so turns each 20 Hz packet into a visible shake.
-        // The server still owns inventory/result state and can issue a hard
         const wasAlive = p.alive
         if (Number.isFinite(state.pingAt)) p.ping = Math.max(0, performance.now() - state.pingAt)
-        const { pos, prev, vel, yaw, pitch, prevYaw, prevPitch, input, act, swingTick, onGround, sneaking, sprinting, slot, ...serverState } = state
-        authoritativeLocalPos = pos
-        authoritativeLocalVel = vel
+        const { pos, prev, vel, yaw, pitch, prevYaw, prevPitch, input, act, swingTick, onGround, sneaking, sprinting, slot, sim, ...serverState } = state
         Object.assign(p, serverState)
-        // A small tolerance avoids visible jitter from ordinary network
-        // jitter/ping, but must stay well under one block: the old 3-block
-        // threshold let a client's prediction drift through a wall and keep
-        // that position indefinitely, since anything under 3 was never
-        // corrected. 0.35 is comfortably inside normal per-tick movement
-        // while still forcing a snap back before a full block of drift.
-        const correction = predHistory.length ? distToPath(pos, predHistory) : Math.hypot(p.pos.x - pos.x, p.pos.y - pos.y, p.pos.z - pos.z)
-        if ((!wasAlive && state.alive) || correction > 0.35) {
-          if (wasAlive) addCamOffset(p.pos, pos)
-          Object.assign(p.pos, pos)
-          Object.assign(p.prev, pos)
-          Object.assign(p.vel, vel)
-          predHistory.length = 0
-          predHistory.push({ x: pos.x, y: pos.y, z: pos.z })
-        }
+        localSync = { state, wasAlive }
       } else Object.assign(p, state)
     }
     for (const [id, p] of game.players) if (p !== local && !seen.has(id)) game.removePlayer(id)
     game.time = snapshot.time
     lastNetworkSnapshot = receivedAt
     const nextBlocks = new Map(snapshot.blocks?.map((b) => [`${b.x},${b.y},${b.z}`, b]) || [])
-    reconcilePredictedBlocks(nextBlocks)
+    const resolved = []
+    if (localSync) {
+      const ack = localSync.state.placeAck
+      const legacy = !Number.isInteger(ack)
+      while (blockPredictions.length && (legacy ? receivedAt - blockPredictions[0].at > 400 : blockPredictions[0].seq <= ack)) resolved.push(blockPredictions.shift().key)
+    }
+    const pending = new Set(blockPredictions.map((b) => b.key))
     for (const [key, block] of networkBlocks) {
-      if (!nextBlocks.has(key)) game.world.set(block.x, block.y, block.z, 0)
+      if (!nextBlocks.has(key) && !pending.has(key)) game.world.set(block.x, block.y, block.z, 0)
     }
     for (const [key, block] of nextBlocks) {
+      if (pending.has(key)) continue
       if (!networkBlocks.has(key) || networkBlocks.get(key).id !== block.id) game.world.set(block.x, block.y, block.z, block.id)
+    }
+    for (const key of resolved) {
+      if (pending.has(key)) continue
+      const [x, y, z] = key.split(',').map(Number)
+      game.world.set(x, y, z, nextBlocks.get(key)?.id ?? 0)
     }
     networkBlocks.clear()
     for (const [key, block] of nextBlocks) networkBlocks.set(key, block)
-    // A placement can arrive while the locally predicted player is moving
-    // into that exact block. The server has already resolved the same move
-    // against the new block, so its position is the authoritative safe
-    // position. Reconcile to that position instead of pushing the player
-    // upward one step at a time (which caused the old floor/air teleport).
-    if (local.alive && authoritativeLocalPos && overlapsSolid(world, playerBox(local.pos))) {
-      addCamOffset(local.pos, authoritativeLocalPos)
-      Object.assign(local.pos, authoritativeLocalPos)
-      Object.assign(local.prev, authoritativeLocalPos)
-      if (authoritativeLocalVel) Object.assign(local.vel, authoritativeLocalVel)
-    }
-    // Preserve client-side object identity while refreshing server-owned
-    // plates and projectiles, so their render meshes do not flicker.
+    if (localSync) reconcileLocal(localSync.state, localSync.wasAlive)
     const syncEntities = (target, states = []) => {
       const existing = new Map(target.map((entity) => [entity.id, entity]))
       target.length = 0
@@ -721,12 +909,12 @@ async function main() {
     socket.addEventListener('close', () => { if (!online) joinError.textContent = 'Could not reach the multiplayer server.' })
   }
   connect()
-  joinServer.addEventListener('click', () => {
-    const name = playerName.value.trim()
-    if (!socket || socket.readyState !== WebSocket.OPEN) return (joinError.textContent = 'Connecting to server…')
-    socket.send(JSON.stringify({ type: 'join', server: selectedServer, name }))
+  joinServer.addEventListener('click', joinSelected)
+  refreshServers.addEventListener('click', () => {
+    if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'list' }))
   })
   statsButton.addEventListener('click', () => {
+    if (lobbyStatsEl.classList.contains('show')) return lobbyStatsEl.classList.remove('show')
     if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'list', name: playerName.value.trim() }))
   })
 
@@ -745,41 +933,237 @@ async function main() {
     if (online) socket?.send(JSON.stringify({ type: 'input', slot: local.slot }))
   }
 
-  // Each visible line carries its own fade-out timer, like vanilla chat.
-  // While the chat box is open for typing, those timers are cleared so the
-  // whole history stays put; closeChat() restarts a fresh fade window.
-  const chatLines = []
-  const applyChatSettings = () => {
-    chatWrap.classList.remove('chat-top-left', 'chat-top-right', 'chat-bottom-left', 'chat-bottom-right')
-    chatWrap.classList.add('chat-' + settings.chatPosition)
-    chatWrap.style.setProperty('--chat-opacity', Math.max(0, Math.min(100, settings.chatOpacity)) / 100)
-    while (chatLines.length > settings.chatLength) {
-      const old = chatLines.shift()
-      clearTimeout(old.timer)
-      old.el.remove()
+  const CHAT_W = 320
+  const chatTrim = []
+  const recentChat = []
+  let chatScroll = 0
+  let chatNewSince = false
+  let chatHistPos = 0
+  let chatHistBuf = ''
+  const chatSbMain = document.createElement('div')
+  const chatSbEdge = document.createElement('div')
+  chatSbMain.className = chatSbEdge.className = 'chat-sb'
+  chatLog.append(chatSbMain, chatSbEdge)
+  const chatPerPage = () => (chatOpen ? 20 : Math.max(1, Math.min(20, settings.chatLength)))
+  const wrapChat = (text) => {
+    const out = []
+    let rest = parseStyled(String(text))
+    let wrapped = false
+    for (;;) {
+      let i = 0
+      let w = wrapped ? 4 : 0
+      while (i < rest.length) {
+        const cw = glyphsWidth([rest[i]])
+        if (w + cw > CHAT_W) break
+        w += cw
+        i++
+      }
+      if (i >= rest.length) {
+        out.push({ glyphs: rest, wrapped })
+        break
+      }
+      let sp = -1
+      for (let k = i; k >= 0; k--) {
+        if (rest[k].ch === ' ') {
+          sp = k
+          break
+        }
+      }
+      if (sp > 0) {
+        out.push({ glyphs: rest.slice(0, sp), wrapped })
+        rest = rest.slice(sp + 1)
+      } else {
+        const cut = Math.max(1, i)
+        out.push({ glyphs: rest.slice(0, cut), wrapped })
+        rest = rest.slice(cut)
+      }
+      wrapped = true
+    }
+    return out
+  }
+  const mcGlyphs = (glyphs) => {
+    const c = makeGlyphCanvas(glyphs, true)
+    c.style.width = `calc(${c.width}px * var(--s))`
+    c.style.height = `calc(${c.height}px * var(--s))`
+    c.style.imageRendering = 'pixelated'
+    return c
+  }
+  const scrollChat = (dir) => {
+    chatScroll += dir
+    const max = chatTrim.length - chatPerPage()
+    if (chatScroll > max) chatScroll = max
+    if (chatScroll <= 0) {
+      chatScroll = 0
+      chatNewSince = false
+    }
+    updateChat()
+  }
+  const updateChat = () => {
+    const s = guiS()
+    const top = settings.chatPosition.startsWith('top')
+    const right = settings.chatPosition.endsWith('right')
+    const bgOp = Math.max(0, Math.min(100, settings.chatOpacity)) / 100
+    const textOp = Math.max(0, Math.min(100, settings.chatTextOpacity)) / 100 * 0.9 + 0.1
+    chatBox.classList.toggle('chat-box-top', top)
+    const per = chatPerPage()
+    const now = performance.now()
+    const n = Math.max(0, Math.min(chatTrim.length - chatScroll, per))
+    for (const ln of chatTrim) ln.el.style.display = 'none'
+    let count = 0
+    for (let i = n - 1; i >= 0; i--) {
+      const ln = chatTrim[i + chatScroll]
+      let a = 1
+      if (!chatOpen) {
+        const t = Math.max(0, Math.min(1, (1 - (now - ln.at) / 50 / 200) * 10))
+        a = t * t
+      }
+      if (a <= 1e-5) continue
+      const st = ln.el.style
+      st.display = 'block'
+      st.left = right ? '' : '0'
+      st.right = right ? '0' : ''
+      if (top) {
+        st.bottom = ''
+        st.top = `calc(${14 + count * 9}px * var(--s))`
+      } else {
+        st.top = ''
+        st.bottom = `calc(${40 + i * 9}px * var(--s))`
+      }
+      st.background = `rgba(0,0,0,${a * bgOp})`
+      ln.el.firstChild.style.opacity = a * textOp
+      count++
+    }
+    const total = chatTrim.length
+    const chatHeight = count * 9
+    const virtual = total * 9
+    if (chatOpen && total > 0 && virtual !== chatHeight && count > 0) {
+      const off = Math.trunc(chatScroll * chatHeight / total)
+      const barH = Math.trunc(chatHeight * chatHeight / virtual)
+      const gh = Math.ceil(innerHeight / s)
+      const alpha = off - (gh - 40) > 0 ? 170 / 255 : 96 / 255
+      const col = chatNewSince ? '204,51,51' : '51,51,170'
+      const place = (el, x, w, color) => {
+        el.style.display = 'block'
+        el.style.width = `calc(${w}px * var(--s))`
+        el.style.height = `calc(${barH}px * var(--s))`
+        el.style.background = `rgba(${color},${alpha})`
+        el.style.left = right ? '' : `calc(${x}px * var(--s))`
+        el.style.right = right ? `calc(${332 - x - w}px * var(--s))` : ''
+        if (top) {
+          el.style.bottom = ''
+          el.style.top = `calc(${14 + chatHeight - off - barH}px * var(--s))`
+        } else {
+          el.style.top = ''
+          el.style.bottom = `calc(${40 + off}px * var(--s))`
+        }
+      }
+      place(chatSbMain, 328, 2, col)
+      place(chatSbEdge, 329, 1, '204,204,204')
+    } else {
+      chatSbMain.style.display = chatSbEdge.style.display = 'none'
     }
   }
-  const scheduleFade = (line, delay) => {
-    clearTimeout(line.timer)
-    line.timer = setTimeout(() => {
-      line.el.remove()
-      const i = chatLines.indexOf(line)
-      if (i !== -1) chatLines.splice(i, 1)
-    }, delay)
+  const applyChatSettings = () => {
+    updateChat()
+    renderChatInput()
   }
   const addChatLine = (text) => {
-    const d = document.createElement('div')
-    d.textContent = text
-    chatLog.appendChild(d)
-    const line = { el: d, timer: null }
-    chatLines.push(line)
-    while (chatLines.length > settings.chatLength) {
-      const old = chatLines.shift()
-      clearTimeout(old.timer)
-      old.el.remove()
+    const parts = wrapChat(String(text))
+    const now = performance.now()
+    for (const p of parts) {
+      if (chatOpen && chatScroll > 0) {
+        chatNewSince = true
+        chatScroll++
+      }
+      const el = document.createElement('div')
+      el.className = 'chat-line'
+      el.appendChild(mcGlyphs(p.wrapped ? [{ ch: ' ', color: '#ffffff', bold: false, italic: false, underline: false, strike: false }, ...p.glyphs] : p.glyphs))
+      chatLog.appendChild(el)
+      chatTrim.unshift({ el, at: now })
     }
-    if (!chatOpen) scheduleFade(line, 10000)
+    while (chatTrim.length > 100) chatTrim.pop().el.remove()
+    const max = chatTrim.length - chatPerPage()
+    if (chatScroll > max) chatScroll = Math.max(0, max)
+    updateChat()
   }
+  let chatFocusAt = 0
+  let chatViewKey = ''
+  let chatViewText = null
+  const renderChatInput = () => {
+    if (!chatOpen) return
+    const s = guiS()
+    const v = chatInput.value
+    const ss = chatInput.selectionStart ?? v.length
+    const se = chatInput.selectionEnd ?? v.length
+    const caretIdx = chatInput.selectionDirection === 'backward' ? ss : se
+    const caretPx = textWidth(v.slice(0, caretIdx))
+    const viewW = Math.ceil(innerWidth / s) - 4
+    const scrollX = Math.max(0, caretPx + (caretIdx >= v.length ? 6 : 1) - viewW)
+    const blink = Math.floor((performance.now() - chatFocusAt) / 300) % 2 === 0
+    const key = `${v}|${ss}|${se}|${scrollX}|${blink}|${s}`
+    if (key === chatViewKey) return
+    chatViewKey = key
+    if (!chatViewText || chatViewText.v !== v) chatViewText = { v, c: mcText(v, '#e0e0e0') }
+    chatView.replaceChildren()
+    const t = chatViewText.c
+    t.style.position = 'absolute'
+    t.style.top = '0'
+    t.style.left = `calc(${-scrollX}px * var(--s))`
+    chatView.appendChild(t)
+    if (ss !== se) {
+      const x0 = textWidth(v.slice(0, Math.min(ss, se)))
+      const x1 = textWidth(v.slice(0, Math.max(ss, se)))
+      const sel = document.createElement('div')
+      sel.className = 'chat-sel'
+      sel.style.left = `calc(${x0 - scrollX}px * var(--s))`
+      sel.style.width = `calc(${x1 - x0}px * var(--s))`
+      chatView.appendChild(sel)
+    }
+    if (blink) {
+      const caret = document.createElement('div')
+      caret.className = 'chat-caret'
+      caret.style.left = `calc(${caretPx - scrollX}px * var(--s))`
+      if (caretIdx >= v.length) {
+        caret.style.width = 'calc(5px * var(--s))'
+        caret.style.height = 'calc(1px * var(--s))'
+        caret.style.top = 'calc(8px * var(--s))'
+      }
+      chatView.appendChild(caret)
+    }
+  }
+  for (const ev of ['input', 'keyup', 'keydown', 'click', 'select', 'focus']) {
+    chatInput.addEventListener(ev, () => {
+      chatFocusAt = performance.now()
+      chatViewKey = ''
+      renderChatInput()
+    })
+  }
+  setInterval(() => {
+    if (chatOpen) renderChatInput()
+    if (chatTrim.length) updateChat()
+  }, 50)
+  const moveInHistory = (dir) => {
+    const max = recentChat.length
+    const np = Math.max(0, Math.min(max, chatHistPos + dir))
+    if (np === chatHistPos) return
+    if (np === max) {
+      chatHistPos = max
+      chatInput.value = chatHistBuf
+    } else {
+      if (chatHistPos === max) chatHistBuf = chatInput.value
+      chatInput.value = recentChat[np]
+      chatHistPos = np
+    }
+    const end = chatInput.value.length
+    chatInput.setSelectionRange(end, end)
+  }
+  addEventListener('wheel', (e) => {
+    if (!chatOpen) return
+    e.preventDefault()
+    const dir = -Math.sign(e.deltaY)
+    scrollChat(Math.trunc(dir * (e.shiftKey ? 1 : 7)))
+  }, { passive: false })
+  addEventListener('resize', () => { chatViewKey = ''; updateChat(); renderChatInput() })
 
   const isPauseLayerOpen = () => paused || options.classList.contains('show') || controls.classList.contains('show') || stats.classList.contains('show') || chatSettings.classList.contains('show')
   const showPauseLayer = (el) => {
@@ -800,29 +1184,37 @@ async function main() {
     pauseBlur.classList.remove('show')
   }
 
-  const openChat = () => {
+  const openChat = (initial = '') => {
     if (!started || isPauseLayerOpen()) return
     chatOpen = true
     suppressPause = true
-    chatInput.value = ''
-    chatInput.classList.add('show')
-    // Keep the whole visible history on screen (no fading) while the
-    // player is actively typing, like vanilla chat.
-    for (const line of chatLines) clearTimeout(line.timer)
+    chatInput.value = initial
+    chatHistPos = recentChat.length
+    chatHistBuf = ''
+    chatBox.classList.add('show')
+    chatFocusAt = performance.now()
+    chatViewKey = ''
     document.exitPointerLock()
-    requestAnimationFrame(() => chatInput.focus())
+    requestAnimationFrame(() => { chatInput.focus(); chatInput.setSelectionRange(initial.length, initial.length) })
     local.act.breakHeld = false
     local.act.useHeld = false
+    updateChat()
+    renderChatInput()
   }
   const closeChat = (submit) => {
-    if (submit && chatInput.value.trim()) {
-      if (online) socket?.send(JSON.stringify({ type: 'chat', text: chatInput.value.trim() }))
-      else game.command(chatInput.value.trim())
+    const msg = chatInput.value.trim().replace(/\s+/g, ' ').slice(0, 256)
+    if (submit && msg) {
+      if (recentChat[recentChat.length - 1] !== msg) recentChat.push(msg)
+      if (recentChat.length > 100) recentChat.shift()
+      if (online) socket?.send(JSON.stringify({ type: 'chat', text: msg }))
+      else game.command(msg, local.id)
     }
     chatOpen = false
-    chatInput.classList.remove('show')
+    chatScroll = 0
+    chatNewSince = false
+    chatBox.classList.remove('show')
     chatInput.blur()
-    for (const line of chatLines) scheduleFade(line, 10000)
+    updateChat()
     if (started) startRelockPoll()
   }
   const closeInventory = () => {
@@ -838,7 +1230,12 @@ async function main() {
     e.stopPropagation()
     if (e.key === 'Enter') closeChat(true)
     else if (e.key === 'Escape') closeChat(false)
+    else if (e.key === 'ArrowUp') { e.preventDefault(); moveInHistory(-1) }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); moveInHistory(1) }
+    else if (e.key === 'PageUp') { e.preventDefault(); scrollChat(chatPerPage() - 1) }
+    else if (e.key === 'PageDown') { e.preventDefault(); scrollChat(-chatPerPage() + 1) }
   })
+  chatInput.addEventListener('blur', () => { if (chatOpen) setTimeout(() => chatOpen && chatInput.focus(), 0) })
 
   const openPause = () => {
     if (!started || invOpen || chatOpen) return
@@ -940,11 +1337,14 @@ async function main() {
   })
   btnStatsDone.addEventListener('click', () => showPauseLayer(pause))
 
-  const sensToDeg = (v) => 0.02 + (v / 100) * 0.6
+  const sensToDeg = (v) => {
+    const f = (v / 200) * 0.6 + 0.2
+    return f * f * f * 8 * 0.15
+  }
   const refreshOptionsUI = () => {
     setPixelText(btnToggleSprint, 'Sprint: ' + (settings.toggleSprint ? 'Toggle' : 'Hold'), 2, '#e0e0e0')
     setPixelText(btnGuiScale, 'GUI Scale: ' + (settings.guiScale === 0 ? 'Auto' : settings.guiScale), 2, '#e0e0e0')
-    sldSens.querySelector('.mc-slider-fill').style.width = settings.mouseSens + '%'
+    sldSens.querySelector('.mc-slider-fill').style.width = settings.mouseSens / 2 + '%'
     setPixelText(sldSens.querySelector('.mc-slider-label'), 'Sensitivity: ' + settings.mouseSens + '%', 2, '#ffffff')
     const fovPct = ((settings.fov - 30) / (110 - 30)) * 100
     sldFov.querySelector('.mc-slider-fill').style.width = fovPct + '%'
@@ -1008,8 +1408,10 @@ async function main() {
     btnChatBR.classList.toggle('mc-tab-active', settings.chatPosition === 'bottom-right')
     sldChatLen.querySelector('.mc-slider-fill').style.width = ((settings.chatLength - 4) / (20 - 4)) * 100 + '%'
     setPixelText(sldChatLen.querySelector('.mc-slider-label'), 'Lines: ' + settings.chatLength, 2, '#ffffff')
+    sldChatTextOpacity.querySelector('.mc-slider-fill').style.width = settings.chatTextOpacity + '%'
+    setPixelText(sldChatTextOpacity.querySelector('.mc-slider-label'), settings.chatTextOpacity + '%', 2, '#ffffff')
     sldChatOpacity.querySelector('.mc-slider-fill').style.width = settings.chatOpacity + '%'
-    setPixelText(sldChatOpacity.querySelector('.mc-slider-label'), 'Opacity: ' + settings.chatOpacity + '%', 2, '#ffffff')
+    setPixelText(sldChatOpacity.querySelector('.mc-slider-label'), settings.chatOpacity + '%', 2, '#ffffff')
     applyChatSettings()
   }
   const setChatPosition = (pos) => {
@@ -1031,6 +1433,12 @@ async function main() {
     sldChatOpacity,
     () => settings.chatOpacity,
     (t) => (settings.chatOpacity = Math.round(t * 100)),
+    refreshChatSettingsUI
+  )
+  bindSlider(
+    sldChatTextOpacity,
+    () => settings.chatTextOpacity,
+    (t) => (settings.chatTextOpacity = Math.round(t * 100)),
     refreshChatSettingsUI
   )
   btnChatSettingsOpen.addEventListener('click', () => {
@@ -1111,6 +1519,11 @@ async function main() {
       openChat()
       return
     }
+    if (e.code === settings.keys.command) {
+      e.preventDefault()
+      openChat('/')
+      return
+    }
     if (e.code === settings.keys.inventory) {
       if (invOpen) closeInventory()
       else {
@@ -1184,26 +1597,11 @@ async function main() {
     if (!locked || invOpen || isPauseLayerOpen() || chatOpen) return
     if (e.code === settings.keys.attack || (settings.keys.attack === 'Mouse0' && e.button === 0)) {
       local.act.attack = true
-      // Render immediately; the server's swingTick confirms the same action
-      // for all other players on the next authoritative tick.
       local.swingTick = clientAnimationTick
-      if (online && socket?.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: 'action', attack: true, yaw: local.yaw, pitch: local.pitch }))
-        local.act.attack = false
-      }
     }
     if (settings.keys.use === 'Mouse2' && e.button === 2) {
       local.act.useHeld = true
-      // Send the initial placement immediately so a normal click (down/up
-      // between two 50 ms input polls) cannot be lost. Held placement then
-      // continues through the regular 20 TPS action packets below.
-      if (online && socket?.readyState === WebSocket.OPEN) {
-        const eye = local.eye()
-        const d = local.look()
-        const target = raycastBlocks(world, eye.x, eye.y, eye.z, d.x, d.y, d.z, C.REACH_BLOCK)
-        socket.send(JSON.stringify({ type: 'action', useHeld: true, yaw: local.yaw, pitch: local.pitch, target }))
-        predictPlace()
-      }
+      local.act.useClick = true
     }
   })
   addEventListener('mouseup', (e) => {
@@ -1230,11 +1628,6 @@ async function main() {
 
   const pollInput = () => {
     const i = local.input
-    // Movement input is only live while the pointer is locked to the game and
-    // no inventory/chat/pause layer is open. When it is not, we must still send
-    // the zeroed input to the server: returning early left the server holding
-    // the last held-W input, so the player kept walking server-side (and the
-    // client then snapped back to it).
     const k = settings.keys
     const inputLive = locked && !invOpen && !chatOpen && !isPauseLayerOpen()
     i.fwd = inputLive ? (keys[k.forward] ? 1 : 0) - (keys[k.back] ? 1 : 0) : 0
@@ -1246,18 +1639,53 @@ async function main() {
       local.wantSprint = false
     }
     if (settings.toggleSprint && sprintToggled && i.fwd > 0 && !i.sneak) local.act.sprintTap = true
-    if (online && socket?.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: 'input', ...i, yaw: local.yaw, pitch: local.pitch, slot: local.slot, sprint: local.act.sprintTap, stopSprint: sprintStopPending, pingAt: performance.now() }))
-      sprintStopPending = false
-      let target = null
-      if (local.act.useHeld) {
-        const eye = local.eye()
-        const d = local.look()
-        target = raycastBlocks(world, eye.x, eye.y, eye.z, d.x, d.y, d.z, C.REACH_BLOCK)
-      }
-      socket.send(JSON.stringify({ type: 'action', attack: local.act.attack, useHeld: local.act.useHeld, yaw: local.yaw, pitch: local.pitch, target }))
-      local.act.attack = false
+    const rec = {
+      fwd: i.fwd,
+      strafe: i.strafe,
+      jump: i.jump,
+      sneak: i.sneak,
+      yaw: local.yaw,
+      pitch: local.pitch,
+      slot: local.slot,
+      sprint: local.act.sprintTap,
+      stopSprint: sprintStopPending,
+      pingAt: performance.now()
     }
+    sprintStopPending = false
+    return rec
+  }
+
+  const onlineTick = (rec) => {
+    const act = local.act
+    const useClick = act.useClick
+    act.useClick = false
+    if (useClick) act.usePending = true
+    const slotType = C.HOTBAR[local.slot]?.type
+    if (slotType !== 'block') act.usePending = false
+    let target = null
+    if (local.alive && locked && (act.useHeld || act.usePending)) {
+      const eye = local.eye()
+      const d = local.look()
+      target = raycastBlocks(world, eye.x, eye.y, eye.z, d.x, d.y, d.z, C.REACH_BLOCK)
+    }
+    if (local.alive && target && slotType === 'block' && (act.useHeld || act.usePending) && local.useDelay === 0) {
+      act.usePending = false
+      predictPlace(target)
+    } else if (local.useDelay === 0 && slotType === 'block' && (act.useHeld || act.usePending) && local.alive) {
+      local.useDelay = 4
+      act.usePending = false
+    }
+    rec.attack = act.attack
+    act.attack = false
+    rec.useHeld = act.useHeld
+    rec.useClick = useClick
+    rec.target = target
+    rec.placeSeq = placeSeq
+    rec.seq = ++inputSeq
+    pendingInputs.push({ seq: rec.seq, fwd: rec.fwd, strafe: rec.strafe, jump: rec.jump, sneak: rec.sneak, yaw: rec.yaw, sprint: rec.sprint, stopSprint: rec.stopSprint })
+    if (pendingInputs.length > 60) pendingInputs.shift()
+    if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'input', ...rec }))
+    if (local.alive) game.move(local)
   }
 
   const name = (id) => (game.players.get(id) ? game.players.get(id).name : '?')
@@ -1292,7 +1720,8 @@ async function main() {
     game.events.length = 0
   }
 
-  let fov = settings.fov
+  let fovMod = 1
+  let fovModOld = 1
   const render = (alpha, dt) => {
     syncChunks()
     syncPlates()
@@ -1316,8 +1745,7 @@ async function main() {
     camera.position.set(ex, ey, ez)
     camera.rotation.y = Math.PI - local.yaw
     camera.rotation.x = -local.pitch
-    const target = settings.fov * (local.sprinting ? 1.12 : 1)
-    fov += (target - fov) * 0.2
+    const fov = settings.fov * lerp(fovModOld, fovMod, alpha)
     if (Math.abs(camera.fov - fov) > 0.01) {
       camera.fov = fov
       camera.updateProjectionMatrix()
@@ -1343,25 +1771,20 @@ async function main() {
     last = now
     acc += dt
     while (acc >= 50) {
-      pollInput()
+      const rec = pollInput()
       clientAnimationTick++
       if (!online) game.update()
       else {
-        // Keep the same update ordering as Game.update(): interpolation must
-        // start from this tick's position before predicted movement mutates
-        // it.  Without this, the camera lerps back to a stale position every
-        // frame and the entire map visibly vibrates.
         Object.assign(local.prev, local.pos)
         local.prevYaw = local.yaw
         local.prevPitch = local.pitch
         if (local.useDelay > 0) local.useDelay--
-        if (local.act.useHeld && locked) predictPlace()
-        game.move(local)
-        predHistory.push({ x: local.pos.x, y: local.pos.y, z: local.pos.z })
-        if (predHistory.length > PRED_HISTORY_TICKS) predHistory.shift()
+        onlineTick(rec)
         const selected = C.HOTBAR[local.slot]
         visualBowTicks = selected?.type === 'bow' && local.act.useHeld ? visualBowTicks + 1 : -1
       }
+      fovModOld = fovMod
+      fovMod += ((local.sprinting ? 1.15 : 1) - fovMod) * 0.5
       handleEvents()
       acc -= 50
     }

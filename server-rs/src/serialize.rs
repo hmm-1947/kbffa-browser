@@ -79,7 +79,11 @@ pub fn serialize_snapshot(game: &Game) -> Value {
                 "hurtAnim": p.hurt_anim,
                 "swingTick": p.swing_tick,
                 "onGround": p.on_ground,
-                "stats": p.stats
+                "stats": p.stats,
+                "pingAt": p.ping_at,
+                "inputAck": p.input_ack,
+                "placeAck": p.place_ack,
+                "sim": { "ws": p.want_sprint, "jt": p.jump_ticks, "hc": p.h_collide }
             })
         })
         .collect();
