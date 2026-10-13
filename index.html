@@ -8,6 +8,7 @@
 </head>
 <body>
   <canvas id="c"></canvas>
+  <div id="adLayer"></div>
   <div id="hud"></div>
   <div id="menu">
     <div class="sl-header"><div id="slTitle" class="sl-title"></div></div>
@@ -33,6 +34,7 @@
       <button id="btnResume" class="mc-btn">Back to game</button>
       <button id="btnBackToServerList" class="mc-btn">Back to server list</button>
       <button id="btnStats" class="mc-btn">Statistics</button>
+      <button id="btnChangeBlocks" class="mc-btn">Change Blocks...</button>
       <button id="btnControls" class="mc-btn">Controls...</button>
       <button id="btnOptions" class="mc-btn">Options...</button>
     </div>
@@ -60,6 +62,7 @@
       <div class="mc-slider" id="sldVolume"><div class="mc-slider-fill"></div><div class="mc-slider-label"></div></div>
     </div>
     <div class="mc-buttons">
+      <button id="btnHotbarOpen" class="mc-btn">Customize Hotbar...</button>
       <button id="btnChatSettingsOpen" class="mc-btn">Chat Settings...</button>
       <button id="btnResetSettings" class="mc-btn">Reset to Default</button>
       <button id="btnOptionsDone" class="mc-btn">Done</button>
@@ -120,6 +123,23 @@
       <button id="btnChatSettingsDone" class="mc-btn">Done</button>
     </div>
   </div>
+  <div id="blockPicker" class="mc-screen">
+    <div class="mc-title">Change Blocks</div>
+    <div id="chestBox" class="chest"></div>
+    <div class="mc-buttons">
+      <button id="btnBlockPickerDone" class="mc-btn">Done</button>
+    </div>
+  </div>
+  <div id="hotbarEditor" class="mc-screen">
+    <div class="mc-title">Customize Hotbar</div>
+    <div id="heBar" class="he-bar"></div>
+    <div class="mc-buttons mc-buttons-row he-buttons">
+      <button id="btnHotbarSave" class="mc-btn">Save</button>
+      <button id="btnHotbarReset" class="mc-btn">Reset</button>
+      <button id="btnHotbarCancel" class="mc-btn">Cancel</button>
+    </div>
+  </div>
+  <div id="heCursor" class="he-cursor"></div>
   <div id="chatWrap">
     <div id="chatLog"></div>
     <div id="chatBox"><input id="chatInput" type="text" maxlength="256" autocomplete="off" spellcheck="false"><div id="chatView"></div></div>

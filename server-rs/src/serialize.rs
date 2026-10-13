@@ -81,6 +81,7 @@ pub fn serialize_snapshot(game: &Game) -> Value {
                 "onGround": p.on_ground,
                 "stats": p.stats,
                 "pingAt": p.ping_at,
+                "ping": p.ping,
                 "inputAck": p.input_ack,
                 "placeAck": p.place_ack,
                 "sim": { "ws": p.want_sprint, "jt": p.jump_ticks, "hc": p.h_collide }

@@ -45,7 +45,7 @@ const serialize = (game) => ({
     prevYaw: p.prevYaw, prevPitch: p.prevPitch, alive: p.alive, sneaking: p.sneaking,
     sprinting: p.sprinting, slot: p.slot, pearls: p.pearls, arrows: p.arrows, kills: p.kills,
     deaths: p.deaths, hurtAnim: p.hurtAnim, swingTick: p.swingTick, onGround: p.onGround, stats: p.stats,
-    pingAt: p.pingAt ?? null,
+    pingAt: p.pingAt ?? null, ping: p.ping,
     inputAck: p.inputAck, placeAck: p.placeAck,
     sim: { ws: p.wantSprint, jt: p.jumpTicks, hc: p.hCollide }
   })),
@@ -111,6 +111,7 @@ wss.on('connection', (ws) => {
       if (p.queue.length >= 20) p.queue.shift()
       p.queue.push(rec)
       if (Number.isFinite(m.pingAt)) p.pingAt = m.pingAt
+      if (Number.isFinite(m.ping)) p.ping = Math.max(0, Math.min(9999, Math.round(m.ping)))
     }
     if (m.type === 'chat' && typeof m.text === 'string') session.map.game.command(m.text.slice(0, 256), session.player.id)
   })

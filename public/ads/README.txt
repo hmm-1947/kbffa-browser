@@ -1,0 +1,1 @@
+Put test.png here (300x250).

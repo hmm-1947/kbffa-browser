@@ -1,4 +1,17 @@
+import { HOTBAR_ITEMS, HOTBAR_DEFAULT, BLOCK_CHOICES } from './config.js'
+
 const STORAGE_KEY = 'kbffa_settings_v1'
+
+const validHotbar = (h) => {
+  if (!Array.isArray(h) || h.length !== 9) return [...HOTBAR_DEFAULT]
+  const seen = new Set()
+  for (const t of h) {
+    if (t === '') continue
+    if (!HOTBAR_ITEMS.includes(t) || seen.has(t)) return [...HOTBAR_DEFAULT]
+    seen.add(t)
+  }
+  return HOTBAR_ITEMS.every((t) => seen.has(t)) ? [...h] : [...HOTBAR_DEFAULT]
+}
 
 export const DEFAULT_KEYBINDS = {
   forward: 'KeyW',
@@ -61,7 +74,9 @@ const DEFAULTS = {
   chatLength: 10,
   chatOpacity: 50,
   chatTextOpacity: 100,
-  keys: { ...DEFAULT_KEYBINDS }
+  keys: { ...DEFAULT_KEYBINDS },
+  hotbar: [...HOTBAR_DEFAULT],
+  placeBlock: "sandstone"
 }
 
 function load() {
@@ -80,7 +95,9 @@ function load() {
       chatLength: typeof parsed.chatLength === 'number' ? parsed.chatLength : DEFAULTS.chatLength,
       chatOpacity: typeof parsed.chatOpacity === 'number' ? parsed.chatOpacity : DEFAULTS.chatOpacity,
       chatTextOpacity: typeof parsed.chatTextOpacity === 'number' ? parsed.chatTextOpacity : DEFAULTS.chatTextOpacity,
-      keys: { ...DEFAULT_KEYBINDS, ...(parsed.keys || {}) }
+      keys: { ...DEFAULT_KEYBINDS, ...(parsed.keys || {}), chat: 'KeyT', command: 'Slash' },
+      hotbar: validHotbar(parsed.hotbar),
+      placeBlock: BLOCK_CHOICES.includes(parsed.placeBlock) ? parsed.placeBlock : DEFAULTS.placeBlock
     }
   } catch {
     return structuredClone(DEFAULTS)
@@ -96,7 +113,8 @@ export function saveSettings() {
 }
 
 export function resetSettings() {
-  Object.assign(settings, structuredClone(DEFAULTS))
+  const keep = { hotbar: settings.hotbar, placeBlock: settings.placeBlock }
+  Object.assign(settings, structuredClone(DEFAULTS), keep)
   saveSettings()
 }
 

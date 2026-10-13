@@ -97,6 +97,8 @@ pub struct Player {
     pub input: Input,
     pub act: Actions,
     pub slot: usize,
+    pub hotbar: [&'static str; 9],
+    pub block: u8,
     pub jump_ticks: i32,
     pub step_distance: f64,
     pub hurt_time: i64,
@@ -120,9 +122,11 @@ pub struct Player {
     pub pending_target: Option<BlockTarget>,
     pub queue: VecDeque<InputRec>,
     pub input_ack: i64,
+    pub starved: u32,
     pub place_seq: i64,
     pub place_ack: i64,
     pub ping_at: Option<f64>,
+    pub ping: f64,
 }
 
 impl Player {
@@ -146,6 +150,8 @@ impl Player {
             input: Input::default(),
             act: Actions::default(),
             slot: 0,
+            hotbar: DEFAULT_HOTBAR,
+            block: id_of(PLACE_BLOCK),
             jump_ticks: 0,
             step_distance: 0.0,
             hurt_time: 0,
@@ -169,9 +175,11 @@ impl Player {
             pending_target: None,
             queue: VecDeque::new(),
             input_ack: 0,
+            starved: 0,
             place_seq: 0,
             place_ack: 0,
             ping_at: None,
+            ping: 0.0,
         }
     }
 
@@ -205,7 +213,7 @@ pub struct Projectile {
     pub stuck_ticks: i64,
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, Default, serde::Serialize)]
 pub struct GameEvent {
     #[serde(rename = "type")]
     pub kind: String,
@@ -221,11 +229,17 @@ pub struct GameEvent {
     pub power: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    #[serde(rename = "victimName", skip_serializing_if = "Option::is_none")]
+    pub victim_name: Option<String>,
+    #[serde(rename = "killerName", skip_serializing_if = "Option::is_none")]
+    pub killer_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub angle: Option<f64>,
 }
 
 impl GameEvent {
     fn simple(kind: &str, id: u64) -> Self {
-        GameEvent { kind: kind.to_string(), id: Some(id), victim: None, killer: None, sound: None, power: None, text: None }
+        GameEvent { kind: kind.to_string(), id: Some(id), victim: None, killer: None, sound: None, power: None, text: None, ..Default::default() }
     }
 }
 
@@ -274,13 +288,13 @@ impl Game {
         let mut p = Player::new(id, name.clone(), false);
         self.respawn(&mut p);
         self.players.insert(id, p);
-        self.events.push(GameEvent { kind: "chat".to_string(), id: None, victim: None, killer: None, sound: None, power: None, text: Some(format!("\u{a7}e{} joined the game", name)) });
+        self.events.push(GameEvent { kind: "chat".to_string(), id: None, victim: None, killer: None, sound: None, power: None, text: Some(format!("\u{a7}e{} joined the game", name)), ..Default::default() });
         id
     }
 
     pub fn remove_player(&mut self, id: u64) {
         if let Some(p) = self.players.remove(&id) {
-            self.events.push(GameEvent { kind: "chat".to_string(), id: None, victim: None, killer: None, sound: None, power: None, text: Some(format!("\u{a7}e{} left the game", p.name)) });
+            self.events.push(GameEvent { kind: "chat".to_string(), id: None, victim: None, killer: None, sound: None, power: None, text: Some(format!("\u{a7}e{} left the game", p.name)), ..Default::default() });
         }
     }
 
@@ -349,6 +363,7 @@ impl Game {
                 p.prev_pitch = p.pitch;
                 if p.queue.len() > 4 { 2 } else { 1 }
             };
+            let mut stepped = false;
             while n > 0 {
                 n -= 1;
                 let rec = {
@@ -362,8 +377,34 @@ impl Game {
                     Some(r) => r,
                     None => break,
                 };
+                stepped = true;
                 self.apply_input(id, rec);
                 self.actions(id);
+                self.mv(id);
+                let void = self.players.get(&id).map(|p| p.pos.y < VOID_Y).unwrap_or(false);
+                if void {
+                    self.kill(id);
+                }
+            }
+            let idle_step = {
+                let p = self.players.get_mut(&id).unwrap();
+                if stepped {
+                    p.starved = 0;
+                    false
+                } else if !p.alive {
+                    false
+                } else {
+                    p.starved += 1;
+                    p.starved >= 3 || p.hurt_time > HURT_RESISTANT / 2
+                }
+            };
+            if idle_step {
+                {
+                    let p = self.players.get_mut(&id).unwrap();
+                    p.input.fwd = 0.0;
+                    p.input.strafe = 0.0;
+                    p.input.jump = false;
+                }
                 self.mv(id);
                 let void = self.players.get(&id).map(|p| p.pos.y < VOID_Y).unwrap_or(false);
                 if void {
@@ -428,7 +469,7 @@ impl Game {
             }
         }
 
-        let hotbar_type = hotbar_type(slot);
+        let hotbar_type = self.players.get(&id).unwrap().hotbar[slot.min(8)];
         let use_delay = self.players.get(&id).unwrap().use_delay;
 
         if hotbar_type == "bow" {
@@ -648,7 +689,7 @@ impl Game {
         if v.vel.y > 0.4 {
             v.vel.y = 0.4;
         }
-        self.events.push(GameEvent::simple("hurt", victim));
+        self.events.push(GameEvent { kind: "hurt".to_string(), id: Some(victim), angle: Some(dz.atan2(dx).to_degrees()), ..Default::default() });
         true
     }
 
@@ -657,11 +698,11 @@ impl Game {
             return;
         }
         self.events.push(GameEvent::simple("melee_hit", id));
-        let (slot, sprinting, yaw) = {
+        let (is_stick, sprinting, yaw) = {
             let p = self.players.get(&id).unwrap();
-            (p.slot, p.sprinting, p.yaw)
+            (p.hotbar[p.slot.min(8)] == "stick", p.sprinting, p.yaw)
         };
-        let kb = (if slot == 0 { KB_LEVEL } else { 0.0 }) + if sprinting { 1.0 } else { 0.0 };
+        let kb = (if is_stick { KB_LEVEL } else { 0.0 }) + if sprinting { 1.0 } else { 0.0 };
         if kb > 0.0 {
             {
                 let t = self.players.get_mut(&target).unwrap();
@@ -715,7 +756,7 @@ impl Game {
     }
 
     fn can_place(&self, x: i32, y: i32, z: i32) -> bool {
-        if !self.world.in_bounds(x, y, z) || y > BUILD_MAX_Y || self.world.get(x, y, z) != 0 {
+        if !self.world.in_bounds(x, y, z) || y > BUILD_MAX_Y || in_ad_zone(x, y, z) || self.world.get(x, y, z) != 0 {
             return false;
         }
         if self.plates.iter().any(|pl| pl.x == x && pl.y == y && pl.z == z) {
@@ -745,7 +786,7 @@ impl Game {
         if !self.can_place(x, y, z) || self.is_spawn_protected(&pos) {
             return false;
         }
-        let block_id = id_of(PLACE_BLOCK);
+        let block_id = self.players.get(&id).unwrap().block;
         self.world.set(x, y, z, block_id);
         self.placed.insert((x, y, z), self.time + BLOCK_LIFETIME);
         let p = self.players.get_mut(&id).unwrap();
@@ -758,6 +799,7 @@ impl Game {
             sound: Some(sound_of(block_id).to_string()),
             power: None,
             text: None,
+            ..Default::default()
         });
         true
     }
@@ -772,7 +814,7 @@ impl Game {
             _ => return,
         };
         let (x, y, z) = (hit.x, hit.y + 1, hit.z);
-        if self.world.get(x, y, z) != 0 || self.plates.iter().any(|pl| pl.x == x && pl.y == y && pl.z == z) {
+        if in_ad_zone(x, y, z) || self.world.get(x, y, z) != 0 || self.plates.iter().any(|pl| pl.x == x && pl.y == y && pl.z == z) {
             return;
         }
         let plate_id = self.next_entity_id;
@@ -855,7 +897,7 @@ impl Game {
         let eid = self.next_entity_id;
         self.next_entity_id += 1;
         self.arrows.push(Projectile { id: eid, pos, prev: pos, vel, owner: id, age: 0, stuck: false, stuck_ticks: 0 });
-        self.events.push(GameEvent { kind: "bow_shoot".to_string(), id: Some(id), victim: None, killer: None, sound: None, power: Some(f), text: None });
+        self.events.push(GameEvent { kind: "bow_shoot".to_string(), id: Some(id), victim: None, killer: None, sound: None, power: Some(f), text: None, ..Default::default() });
         self.players.get_mut(&id).unwrap().swing_tick = self.time;
     }
 
@@ -1032,7 +1074,7 @@ impl Game {
         };
         let mut killer = None;
         if let Some(a) = last_attacker {
-            if self.time - last_attack_time <= KILL_CREDIT_TICKS && a != id {
+            if self.time - last_attack_time <= KILL_CREDIT_TICKS && a != id && self.players.contains_key(&a) {
                 killer = Some(a);
             }
         }
@@ -1050,7 +1092,9 @@ impl Game {
         p.alive = false;
         p.respawn_at = self.time + RESPAWN_TICKS;
         p.bow_ticks = -1;
-        self.events.push(GameEvent { kind: "death".to_string(), id: None, victim: Some(id), killer, sound: None, power: None, text: None });
+        let victim_name = self.players.get(&id).map(|p| p.name.clone());
+        let killer_name = killer.and_then(|k| self.players.get(&k).map(|p| p.name.clone()));
+        self.events.push(GameEvent { kind: "death".to_string(), id: None, victim: Some(id), killer, victim_name, killer_name, ..Default::default() });
     }
 
     fn expire(&mut self) {
@@ -1062,7 +1106,7 @@ impl Game {
     }
 
     fn chat_event(&mut self, text: String) {
-        self.events.push(GameEvent { kind: "chat".to_string(), id: None, victim: None, killer: None, sound: None, power: None, text: Some(text) });
+        self.events.push(GameEvent { kind: "chat".to_string(), id: None, victim: None, killer: None, sound: None, power: None, text: Some(text), ..Default::default() });
     }
 
     pub fn command(&mut self, id: u64, text: &str) {
@@ -1085,13 +1129,39 @@ impl Game {
     }
 }
 
-fn hotbar_type(slot: usize) -> &'static str {
-    match slot {
-        0 => "stick",
-        1 => "bow",
-        2 => "block",
-        3 => "pearl",
-        4 => "plate",
-        _ => "",
+pub const DEFAULT_HOTBAR: [&str; 9] = ["stick", "bow", "block", "pearl", "plate", "", "", "", ""];
+
+const BLOCK_CHOICES: &[&str] = &[
+    "stone", "cobblestone", "dirt", "oak_planks", "spruce_planks", "birch_planks", "sandstone", "red_sandstone", "bricks",
+    "stone_bricks", "white_wool", "red_wool", "blue_wool", "netherrack", "obsidian", "coal_block", "iron_block", "gold_block",
+    "diamond_block", "emerald_block", "lapis_block", "clay", "terracotta", "glowstone", "bookshelf", "oak_log", "end_stone",
+];
+
+pub fn parse_hotbar(s: &str) -> Option<[&'static str; 9]> {
+    let mut out = [""; 9];
+    let mut n = 0;
+    for part in s.split(',') {
+        if n >= 9 {
+            return None;
+        }
+        let item = match part {
+            "stick" => "stick",
+            "bow" => "bow",
+            "block" => "block",
+            "pearl" => "pearl",
+            "plate" => "plate",
+            "" => "",
+            _ => return None,
+        };
+        if !item.is_empty() && out.contains(&item) {
+            return None;
+        }
+        out[n] = item;
+        n += 1;
     }
+    if n == 9 { Some(out) } else { None }
+}
+
+pub fn choose_block(name: &str) -> Option<u8> {
+    if BLOCK_CHOICES.contains(&name) { Some(id_of(name)) } else { None }
 }

@@ -1,4 +1,4 @@
-import { CONFIG as C } from './config.js'
+import { CONFIG as C, inAdZone } from './config.js'
 import { World } from './world.js'
 import { BLOCK_DEFS, ID } from './blocks.js'
 import { moveEntity, playerBox, overlapsSolid } from './physics.js'
@@ -51,6 +51,7 @@ export class Player {
     this.respawnAt = 0
     this.queue = []
     this.inputAck = 0
+    this.starved = 0
     this.placeSeq = 0
     this.placeAck = 0
   }
@@ -140,12 +141,21 @@ export class Game {
       }
       Object.assign(p.prev, p.pos)
       p.prevYaw = p.yaw
-      p.prevPitch = p.pitch
       if (this.queuedInput && !p.isBot) {
         let n = p.queue.length > 4 ? 2 : 1
+        let stepped = false
         while (n-- > 0 && p.queue.length && p.alive) {
+          stepped = true
           this.applyInput(p, p.queue.shift())
           this.actions(p)
+          this.move(p)
+          if (p.pos.y < C.VOID_Y) this.kill(p)
+        }
+        if (stepped) p.starved = 0
+        else if (p.alive && (++p.starved >= 3 || p.hurtTime > C.HURT_RESISTANT / 2)) {
+          p.input.fwd = 0
+          p.input.strafe = 0
+          p.input.jump = false
           this.move(p)
           if (p.pos.y < C.VOID_Y) this.kill(p)
         }
@@ -352,7 +362,7 @@ export class Game {
     v.vel.y = v.vel.y / 2 + 0.4
     v.vel.z = v.vel.z / 2 - (dz / f) * 0.4
     if (v.vel.y > 0.4) v.vel.y = 0.4
-    this.events.push({ type: 'hurt', id: v.id })
+    this.events.push({ type: 'hurt', id: v.id, angle: (Math.atan2(dz, dx) * 180) / Math.PI })
     return true
   }
 
@@ -405,7 +415,7 @@ export class Game {
   }
 
   canPlace(x, y, z) {
-    if (!this.world.inBounds(x, y, z) || y > C.BUILD_MAX_Y || this.world.get(x, y, z) !== 0) return false
+    if (!this.world.inBounds(x, y, z) || y > C.BUILD_MAX_Y || inAdZone(x, y, z) || this.world.get(x, y, z) !== 0) return false
     if (this.plates.some((pl) => pl.x === x && pl.y === y && pl.z === z)) return false
     for (const q of this.players.values()) {
       if (!q.alive) continue
@@ -439,7 +449,7 @@ export class Game {
     const x = h.x
     const y = h.y + 1
     const z = h.z
-    if (this.world.get(x, y, z) !== 0 || this.plates.some((pl) => pl.x === x && pl.y === y && pl.z === z)) return
+    if (inAdZone(x, y, z) || this.world.get(x, y, z) !== 0 || this.plates.some((pl) => pl.x === x && pl.y === y && pl.z === z)) return
     const pl = { id: this.nextEntityId++, x, y, z, owner: p.id, expire: this.time + C.PLATE_LIFETIME }
     this.plates.push(pl)
     p.plate = pl
@@ -651,7 +661,7 @@ export class Game {
     p.alive = false
     p.respawnAt = this.time + C.RESPAWN_TICKS
     p.bowTicks = -1
-    this.events.push({ type: 'death', victim: p.id, killer: killer ? killer.id : null })
+    this.events.push({ type: 'death', victim: p.id, killer: killer ? killer.id : null, victimName: p.name, killerName: killer ? killer.name : null })
   }
 
   isSpawnProtected(pos) {

@@ -279,6 +279,11 @@ async fn handle_message(server: &Arc<Server>, conn_id: u64, tx: &mpsc::Unbounded
             p.queue.pop_front();
         }
         p.queue.push_back(rec);
+        if let Some(ms) = m.get("ping").and_then(|v| v.as_f64()) {
+            if ms.is_finite() {
+                p.ping = ms.clamp(0.0, 9999.0).round();
+            }
+        }
         if let Some(t) = m.get("pingAt").and_then(|v| v.as_f64()) {
             if t.is_finite() {
                 p.ping_at = Some(t);
@@ -286,6 +291,15 @@ async fn handle_message(server: &Arc<Server>, conn_id: u64, tx: &mpsc::Unbounded
         }
     }
 
+    if mtype == "loadout" {
+        if let Some(h) = m.get("hotbar").and_then(|v| v.as_str()).and_then(game::parse_hotbar) {
+            p.hotbar = h;
+            p.bow_ticks = -1;
+        }
+        if let Some(b) = m.get("block").and_then(|v| v.as_str()).and_then(game::choose_block) {
+            p.block = b;
+        }
+    }
     if mtype == "chat" {
         if let Some(text) = m.get("text").and_then(|v| v.as_str()) {
             let truncated: String = text.chars().take(256).collect();

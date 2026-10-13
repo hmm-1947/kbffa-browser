@@ -1,7 +1,7 @@
 import { CONFIG as C } from './config.js'
 import { img, url } from './textures.js'
 import { ID, faceTexName } from './blocks.js'
-import { makeBitmapTextCanvas, setPixelText, textWidth, drawBitmapText } from './bitmapfont.js'
+import { makeBitmapTextCanvas, setPixelText, textWidth, drawBitmapText, makeGlyphCanvas, parseStyled } from './bitmapfont.js'
 import { settings } from './settings.js'
 
 // HUD text is rasterised at 1 font-pixel per canvas pixel and sized with CSS so it
@@ -27,7 +27,7 @@ const levelText = (str) => {
 // Largest GUI scale that still fits the window (same rule Minecraft uses).
 export const maxGuiScale = () => Math.max(1, Math.floor(Math.min(innerWidth / 320, innerHeight / 240)))
 
-function blockIcon(id) {
+export function blockIcon(id) {
   const c = document.createElement('canvas')
   c.width = c.height = 64
   const g = c.getContext('2d')
@@ -57,7 +57,7 @@ function blockIcon(id) {
   return c
 }
 
-function itemIcon(name) {
+export function itemIcon(name) {
   if (name === 'gold_pressure_plate') return plateIcon()
   const i = document.createElement('img')
   i.src = url('items', name)
@@ -88,7 +88,6 @@ export class Hud {
     this.resize()
     const cross = el('img', 'crosshair', root)
     cross.src = url('gui', 'crosshair')
-    this.hurt = el('div', 'hurt', root)
     this.feed = el('div', 'feed', root)
     this.board = el('div', 'board', root)
     this.boardTitle = el('div', 'board-title', this.board)
@@ -147,7 +146,7 @@ export class Hud {
         const c = el('div', 'count', s)
         setPixelText(c, '64', 2, '#ffffff')
       }
-      if (i >= 27 && C.HOTBAR[i - 27]) {
+      if (i >= 27) {
         const hotbarIndex = i - 27
         s.classList.add('inv-hotbar-slot')
         s.draggable = true
@@ -220,18 +219,11 @@ export class Hud {
     this.inv.style.display = on ? 'block' : 'none'
   }
 
-  flashHurt() {
-    this.hurt.style.transition = 'none'
-    this.hurt.style.opacity = '0.45'
-    requestAnimationFrame(() => {
-      this.hurt.style.transition = 'opacity 0.4s'
-      this.hurt.style.opacity = '0'
-    })
-  }
-
   addFeed(text) {
     const d = el('div', 'feed-line', this.feed)
-    d.appendChild(guiText(text, '#ffffff'))
+    const c = sizeCanvas(makeGlyphCanvas(parseStyled(text), true))
+    c.style.marginLeft = 'calc(-2px * var(--s))'
+    d.appendChild(c)
     setTimeout(() => d.remove(), 6000)
   }
 

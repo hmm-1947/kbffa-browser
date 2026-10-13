@@ -1,18 +1,21 @@
 import * as THREE from 'three'
-import { CONFIG as C } from './config.js'
+import { CONFIG as C, BLOCK_CHOICES, HOTBAR_DEFAULT } from './config.js'
 import { ID } from './blocks.js'
 import { loadTextures, buildAtlas, img, makeTexture } from './textures.js'
 import { Game } from './game.js'
 import nik from './maps/nik.js'
 import { buildChunk, blockCubeGeometry } from './mesher.js'
 import { extrudeSprite, buildPlayerModel, buildFirstPersonArm, vertexMaterial } from './models.js'
-import { Hud, maxGuiScale } from './hud.js'
+import { Hud, maxGuiScale, blockIcon, itemIcon } from './hud.js'
+import { applyLoadout, commitLoadout, onLoadout, defFor } from './loadout.js'
 import { SkyLight } from './light.js'
+import { createBillboard } from './billboard.js'
 import { raycastBlocks } from './raycast.js'
 import { overlapsSolid, playerBox } from './physics.js'
 import { settings, saveSettings, resetSettings, DEFAULT_KEYBINDS, ACTION_LABELS, keyLabel, CHAT_POSITIONS } from './settings.js'
 import { setPixelText, makeBitmapTextCanvas, textWidth, parseStyled, glyphsWidth, makeGlyphCanvas } from './bitmapfont.js'
 import { playSound } from './sounds.js'
+import { TabList } from './tablist.js'
 
 const lerp = (a, b, t) => a + (b - a) * t
 const lerpAngle = (a, b, t) => {
@@ -24,6 +27,7 @@ const lerpAngle = (a, b, t) => {
 
 async function main() {
   await loadTextures()
+  applyLoadout()
   const atlas = buildAtlas()
   const game = new Game(nik)
   const local = game.addPlayer('Player')
@@ -45,8 +49,10 @@ async function main() {
   const camera = new THREE.PerspectiveCamera(C.FOV, 1, 0.05, 600)
   camera.rotation.order = 'YXZ'
   scene.add(camera)
+  const billboard = createBillboard(scene)
   const resize = () => {
     renderer.setSize(innerWidth, innerHeight, false)
+    billboard.resize(innerWidth, innerHeight)
     camera.aspect = innerWidth / innerHeight
     camera.updateProjectionMatrix()
   }
@@ -54,9 +60,11 @@ async function main() {
   resize()
 
   const hud = new Hud(document.getElementById('hud'))
+  const tabList = new TabList(document.getElementById('hud'))
   hud.setHotbarSwapHandler((a, b) => {
-    ;[C.HOTBAR[a], C.HOTBAR[b]] = [C.HOTBAR[b], C.HOTBAR[a]]
-    hud.refreshHotbar()
+    const h = [...settings.hotbar]
+    ;[h[a], h[b]] = [h[b], h[a]]
+    commitLoadout(h)
     playSound('ui_click', { volume: 0.35 })
   })
   // The grass side overlay contains transparent pixels.  Discard them so its
@@ -200,12 +208,13 @@ async function main() {
       m.group.position.set(x, y, z)
       m.group.rotation.y = -lerpAngle(p.prevYaw, p.yaw, alpha)
       m.head.rotation.x = lerp(p.prevPitch, p.pitch, alpha)
-      const speed = Math.hypot(x - m.lx, z - m.lz) / Math.max(dt, 0.001)
+      const speed = Math.min(Math.hypot(x - m.lx, z - m.lz) / Math.max(dt, 0.001), 40)
       m.lx = x
       m.lz = z
-      m.amp += (Math.min(speed / 5, 1) - m.amp) * 0.3
-      m.walk += speed * dt * 2.4
-      const sw = Math.sin(m.walk) * m.amp
+      m.amp += (Math.min(speed / 5, 1) - m.amp) * (1 - Math.pow(0.6, Math.min(dt, 0.1) * 20))
+      const limb = Math.min(m.amp, 1)
+      m.walk += limb * Math.min(dt, 0.1) * 20 * 0.6662
+      const sw = Math.cos(m.walk) * limb
       // Reset the pose before applying animation.  These are the vanilla
       // HumanoidModel crouch transforms, converted from its downward-Y model
       // space to this renderer's upward-Y coordinate system.
@@ -222,10 +231,10 @@ async function main() {
       m.body.rotation.y = 0
       m.armR.rotation.y = m.armL.rotation.y = 0
       m.armR.rotation.z = m.armL.rotation.z = 0
-      m.legR.rotation.x = sw
-      m.legL.rotation.x = -sw
-      m.armR.rotation.x = -sw * 0.8
-      m.armL.rotation.x = sw * 0.8
+      m.legR.rotation.x = sw * 1.4
+      m.legL.rotation.x = -sw * 1.4
+      m.armR.rotation.x = -sw
+      m.armL.rotation.x = sw
       if (p.sneaking) {
         m.body.rotation.x = 0.5
         m.armR.rotation.x += 0.4
@@ -256,7 +265,7 @@ async function main() {
         m.armR.rotation.x -= aa * 1.2 + bb
         m.armR.rotation.z -= Math.sin(attackTime * Math.PI) * 0.4
       }
-      m.mat.color.setHex(p.hurtAnim > 0 ? 0xff7070 : 0xffffff)
+      m.mat.color.setHex(p.hurtAnim > 0 ? 0xffb3b3 : 0xffffff)
     }
   }
 
@@ -321,9 +330,14 @@ async function main() {
   }
   const heldPlateMat = new THREE.MeshBasicMaterial({ map: makeTexture('blocks', 'gold_block'), vertexColors: true })
   addHeld('plate', new THREE.Mesh(heldPlateGeo, heldPlateMat), thinBlockDisplay)
-  const blockDef = C.HOTBAR.find((s) => s.type === 'block')
-  const cube = new THREE.Mesh(blockCubeGeometry(atlas, ID[blockDef.block]), chunkMat)
+  const cube = new THREE.Mesh(blockCubeGeometry(atlas, ID[C.PLACE_BLOCK]), chunkMat)
   addHeld('block', cube, blockDisplay)
+  onLoadout(() => {
+    hud.refreshHotbar()
+    cube.geometry.dispose()
+    cube.geometry = blockCubeGeometry(atlas, ID[C.PLACE_BLOCK])
+    sendLoadout()
+  })
 
   const armModel = chain(mt(-5 / 16, 2 / 16, 0), new M4().makeRotationZ(0.1), mrx(180), mt(-1 / 16, 2 / 16, 0), msc(2 / 1.8, 2 / 1.8, 2 / 1.8))
   const handState = { tick: 0, h: 1, oh: 1, shown: undefined, bob: 0, oBob: 0, walk: 0, oWalk: 0, xb: 0, oxb: 0, yb: 0, oyb: 0, init: false }
@@ -464,6 +478,14 @@ async function main() {
   const sldFov = document.getElementById('sldFov')
   const sldVolume = document.getElementById('sldVolume')
   const btnChatSettingsOpen = document.getElementById('btnChatSettingsOpen')
+  const btnChangeBlocks = document.getElementById('btnChangeBlocks')
+  const btnBlockPickerDone = document.getElementById('btnBlockPickerDone')
+  const btnHotbarOpen = document.getElementById('btnHotbarOpen')
+  const btnHotbarSave = document.getElementById('btnHotbarSave')
+  const btnHotbarReset = document.getElementById('btnHotbarReset')
+  const btnHotbarCancel = document.getElementById('btnHotbarCancel')
+  const blockPicker = document.getElementById('blockPicker')
+  const hotbarEditor = document.getElementById('hotbarEditor')
   const btnChatSettingsDone = document.getElementById('btnChatSettingsDone')
   const btnChatTL = document.getElementById('btnChatTL')
   const btnChatTR = document.getElementById('btnChatTR')
@@ -492,6 +514,8 @@ async function main() {
   let paused = false
   let chatOpen = false
   let suppressPause = false
+  let lastEscAt = 0
+  let lastCloseAt = 0
   let rebindAction = null
   let allPlayerStats = []
   let statsFilter = 'online'
@@ -515,6 +539,9 @@ async function main() {
   let sprintStopPending = false
   let socket = null
   let online = false
+  const sendLoadout = () => {
+    if (online && socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'loadout', hotbar: settings.hotbar.join(','), block: settings.placeBlock }))
+  }
   let selectedServer = null
   let clientAnimationTick = 0
   let visualBowTicks = -1
@@ -735,6 +762,11 @@ async function main() {
     const y = h.y + h.ny
     const z = h.z + h.nz
     if (!game.canPlace(x, y, z) || game.isSpawnProtected({ x: x + 0.5, y, z: z + 0.5 })) return
+    for (const q of game.players.values()) {
+      if (!q.alive) continue
+      const b = playerBox(q.pos)
+      if (b.minX - 0.12 < x + 1 && b.maxX + 0.12 > x && b.minY < y + 1 && b.maxY > y && b.minZ - 0.12 < z + 1 && b.maxZ + 0.12 > z) return
+    }
     placeSeq++
     blockPredictions.push({ seq: placeSeq, key: `${x},${y},${z}`, at: performance.now() })
     world.set(x, y, z, ID[C.PLACE_BLOCK])
@@ -846,7 +878,7 @@ async function main() {
       if (p === local) {
         const wasAlive = p.alive
         if (Number.isFinite(state.pingAt)) p.ping = Math.max(0, performance.now() - state.pingAt)
-        const { pos, prev, vel, yaw, pitch, prevYaw, prevPitch, input, act, swingTick, onGround, sneaking, sprinting, slot, sim, ...serverState } = state
+        const { pos, prev, vel, yaw, pitch, prevYaw, prevPitch, input, act, swingTick, onGround, sneaking, sprinting, slot, sim, ping, ...serverState } = state
         Object.assign(p, serverState)
         localSync = { state, wasAlive }
       } else Object.assign(p, state)
@@ -902,6 +934,7 @@ async function main() {
       if (message.type === 'joined') {
         game.players.delete(local.id); local.id = message.playerId; local.name = playerName.value.trim(); local.stats = message.stats; game.players.set(local.id, local)
         online = true; started = true; menu.style.display = 'none'; joinError.textContent = ''
+        sendLoadout()
       }
       if (message.type === 'snapshot') syncSnapshot(message)
       if (message.type === 'all_stats') { allPlayerStats = message.players || []; renderStatsList() }
@@ -930,7 +963,6 @@ async function main() {
   }
   const setSlot = (n) => {
     game.setSlot(local, ((n % 9) + 9) % 9)
-    if (online) socket?.send(JSON.stringify({ type: 'input', slot: local.slot }))
   }
 
   const CHAT_W = 320
@@ -1165,13 +1197,15 @@ async function main() {
   }, { passive: false })
   addEventListener('resize', () => { chatViewKey = ''; updateChat(); renderChatInput() })
 
-  const isPauseLayerOpen = () => paused || options.classList.contains('show') || controls.classList.contains('show') || stats.classList.contains('show') || chatSettings.classList.contains('show')
+  const isPauseLayerOpen = () => paused || options.classList.contains('show') || controls.classList.contains('show') || stats.classList.contains('show') || chatSettings.classList.contains('show') || blockPicker.classList.contains('show') || hotbarEditor.classList.contains('show')
   const showPauseLayer = (el) => {
     pause.classList.remove('show')
     options.classList.remove('show')
     controls.classList.remove('show')
     stats.classList.remove('show')
     chatSettings.classList.remove('show')
+    blockPicker.classList.remove('show')
+    hotbarEditor.classList.remove('show')
     pauseBlur.classList.add('show')
     el.classList.add('show')
   }
@@ -1181,6 +1215,8 @@ async function main() {
     controls.classList.remove('show')
     stats.classList.remove('show')
     chatSettings.classList.remove('show')
+    blockPicker.classList.remove('show')
+    hotbarEditor.classList.remove('show')
     pauseBlur.classList.remove('show')
   }
 
@@ -1215,7 +1251,10 @@ async function main() {
     chatBox.classList.remove('show')
     chatInput.blur()
     updateChat()
-    if (started) startRelockPoll()
+    if (started) {
+      if (submit) startRelockPoll()
+      else setTimeout(() => { if (!chatOpen && !paused && !invOpen) startRelockPoll() }, 350)
+    }
   }
   const closeInventory = () => {
     invOpen = false
@@ -1229,7 +1268,7 @@ async function main() {
   chatInput.addEventListener('keydown', (e) => {
     e.stopPropagation()
     if (e.key === 'Enter') closeChat(true)
-    else if (e.key === 'Escape') closeChat(false)
+    else if (e.key === 'Escape') { e.preventDefault(); closeChat(false) }
     else if (e.key === 'ArrowUp') { e.preventDefault(); moveInHistory(-1) }
     else if (e.key === 'ArrowDown') { e.preventDefault(); moveInHistory(1) }
     else if (e.key === 'PageUp') { e.preventDefault(); scrollChat(chatPerPage() - 1) }
@@ -1251,24 +1290,30 @@ async function main() {
   // locks (or we no longer want it locked), which reliably catches the
   // moment the browser lifts the cooldown.
   let relockPoll = null
+  let lastLockExit = 0
   const stopRelockPoll = () => {
     if (relockPoll) { clearInterval(relockPoll); relockPoll = null }
   }
   const tryRelock = () => {
-    if (!started || paused || invOpen || chatOpen) { stopRelockPoll(); return }
+    if (!started || paused || invOpen || chatOpen || locked) { stopRelockPoll(); return }
     lockPointer()
-    canvas.requestPointerLock()
   }
   const startRelockPoll = () => {
     stopRelockPoll()
     tryRelock()
-    relockPoll = setInterval(tryRelock, 120)
-    setTimeout(stopRelockPoll, 2000)
+    relockPoll = setInterval(tryRelock, 40)
+    setTimeout(stopRelockPoll, 30000)
+  }
+  for (const type of ['mousemove', 'mousedown', 'keydown', 'pointermove', 'touchstart']) {
+    addEventListener(type, () => {
+      if (started && !paused && !invOpen && !chatOpen && !locked && !isPauseLayerOpen()) tryRelock()
+    }, { capture: true })
   }
   const closePause = () => {
     paused = false
     hidePauseLayers()
     suppressPause = true
+    lastCloseAt = performance.now()
     startRelockPoll()
   }
   btnResume.addEventListener('click', closePause)
@@ -1278,6 +1323,115 @@ async function main() {
     location.reload()
   })
 
+  const guiCanvasText = (str, color) => {
+    const c = makeBitmapTextCanvas(str, 1, color)
+    c.style.width = `calc(${c.width}px * var(--s))`
+    c.style.height = `calc(${c.height}px * var(--s))`
+    return c
+  }
+  const chestBox = document.getElementById('chestBox')
+  const chestSlots = []
+  {
+    const title = document.createElement('div')
+    title.className = 'chest-title'
+    title.appendChild(guiCanvasText('Choose Block', '#404040'))
+    chestBox.appendChild(title)
+    BLOCK_CHOICES.forEach((name, i) => {
+      const s = document.createElement('div')
+      s.className = 'chest-slot'
+      s.style.left = `calc(${8 + (i % 9) * 18}px * var(--s))`
+      s.style.top = `calc(${18 + Math.floor(i / 9) * 18}px * var(--s))`
+      s.title = name.replace(/_/g, ' ')
+      s.appendChild(blockIcon(ID[name]))
+      s.addEventListener('click', () => {
+        commitLoadout(null, name)
+        refreshChestSel()
+        playSound('ui_click', { volume: 0.35 })
+      })
+      chestBox.appendChild(s)
+      chestSlots.push(s)
+    })
+  }
+  const refreshChestSel = () => chestSlots.forEach((s, i) => s.classList.toggle('sel', BLOCK_CHOICES[i] === settings.placeBlock))
+  btnChangeBlocks.addEventListener('click', () => {
+    refreshChestSel()
+    showPauseLayer(blockPicker)
+  })
+  btnBlockPickerDone.addEventListener('click', () => showPauseLayer(pause))
+
+  const heBar = document.getElementById('heBar')
+  const heCursor = document.getElementById('heCursor')
+  let heLayout = []
+  let heHeld = ''
+  const heSlots = []
+  const heIcon = (t) => {
+    const d = defFor(t)
+    return d.type === 'block' ? blockIcon(ID[d.block]) : itemIcon(d.item)
+  }
+  const heRender = () => {
+    heSlots.forEach((s, i) => {
+      s.replaceChildren()
+      if (heLayout[i]) s.appendChild(heIcon(heLayout[i]))
+    })
+    heCursor.replaceChildren()
+    if (heHeld) heCursor.appendChild(heIcon(heHeld))
+    heCursor.style.display = heHeld ? 'block' : 'none'
+  }
+  const heClick = (i) => {
+    const cur = heLayout[i]
+    if (heHeld) {
+      heLayout[i] = heHeld
+      heHeld = cur
+    } else if (cur) {
+      heHeld = cur
+      heLayout[i] = ''
+    } else {
+      return
+    }
+    playSound('ui_click', { volume: 0.35 })
+    heRender()
+  }
+  for (let i = 0; i < 9; i++) {
+    const s = document.createElement('div')
+    s.className = 'he-slot'
+    s.style.left = `calc(${3 + i * 20}px * var(--s))`
+    s.addEventListener('click', () => heClick(i))
+    heBar.appendChild(s)
+    heSlots.push(s)
+  }
+  addEventListener('mousemove', (e) => {
+    if (!heHeld) return
+    heCursor.style.left = `calc(${e.clientX}px - 8px * var(--s))`
+    heCursor.style.top = `calc(${e.clientY}px - 8px * var(--s))`
+  })
+  const openHotbarEditor = () => {
+    heLayout = [...settings.hotbar]
+    heHeld = ''
+    heRender()
+    showPauseLayer(hotbarEditor)
+  }
+  const cancelHotbarEditor = () => {
+    heHeld = ''
+    heRender()
+    showPauseLayer(options)
+  }
+  btnHotbarOpen.addEventListener('click', openHotbarEditor)
+  btnHotbarCancel.addEventListener('click', cancelHotbarEditor)
+  btnHotbarReset.addEventListener('click', () => {
+    heLayout = [...HOTBAR_DEFAULT]
+    heHeld = ''
+    heRender()
+  })
+  btnHotbarSave.addEventListener('click', () => {
+    if (heHeld) {
+      const empty = heLayout.indexOf('')
+      if (empty >= 0) heLayout[empty] = heHeld
+      heHeld = ''
+    }
+    commitLoadout(heLayout)
+    heRender()
+    showPauseLayer(options)
+  })
   const renderStatsList = () => {
     const sortField = STATS_SORT_FIELDS[statsSortIndex]
     setPixelText(btnStatsSort, 'Sort: ' + sortField.label, 2, '#e0e0e0')
@@ -1498,9 +1652,16 @@ async function main() {
     }
     if (chatOpen) return
     if (e.code === 'Escape') {
+      if (e.repeat) { e.preventDefault(); return }
+      if (performance.now() - lastEscAt < 300) return
+      lastEscAt = performance.now()
       if (invOpen) {
         e.preventDefault()
         closeInventory()
+      } else if (hotbarEditor.classList.contains('show')) {
+        cancelHotbarEditor()
+      } else if (blockPicker.classList.contains('show')) {
+        showPauseLayer(pause)
       } else if (options.classList.contains('show')) {
         showPauseLayer(pause)
       } else if (controls.classList.contains('show')) {
@@ -1514,14 +1675,19 @@ async function main() {
     }
     if (isPauseLayerOpen()) return
     if (started && !paused && !invOpen && !chatOpen && !locked) startRelockPoll()
-    if (e.code === settings.keys.chat) {
+    if (e.key === '/' || e.code === 'Slash' || e.code === settings.keys.command) {
+      e.preventDefault()
+      openChat('/')
+      return
+    }
+    if (e.code === 'KeyT' || e.key === 't' || e.key === 'T' || e.code === settings.keys.chat) {
       e.preventDefault()
       openChat()
       return
     }
-    if (e.code === settings.keys.command) {
+    if (e.code === 'Tab') {
       e.preventDefault()
-      openChat('/')
+      if (!invOpen) tabList.setVisible(true)
       return
     }
     if (e.code === settings.keys.inventory) {
@@ -1561,8 +1727,10 @@ async function main() {
   })
   addEventListener('keyup', (e) => {
     keys[e.code] = false
+    if (e.code === 'Tab') tabList.setVisible(false)
   })
   addEventListener('blur', () => {
+    tabList.setVisible(false)
     for (const k in keys) keys[k] = false
   })
 
@@ -1573,14 +1741,17 @@ async function main() {
     locked = document.pointerLockElement === canvas
     if (locked) {
       started = true
+      try { navigator.keyboard?.lock?.(["Escape"])?.catch?.(() => {}) } catch {}
+      billboard.start()
       hidePauseLayers()
       paused = false
       menu.style.display = 'none'
     } else {
+      lastLockExit = performance.now()
       local.act.breakHeld = false
       local.act.useHeld = false
       menu.style.display = started ? 'none' : 'flex'
-      if (started && !invOpen && !chatOpen && !suppressPause) {
+      if (started && !invOpen && !chatOpen && !suppressPause && performance.now() - lastCloseAt > 700) {
         paused = true
         showPauseLayer(pause)
       }
@@ -1649,7 +1820,8 @@ async function main() {
       slot: local.slot,
       sprint: local.act.sprintTap,
       stopSprint: sprintStopPending,
-      pingAt: performance.now()
+      pingAt: performance.now(),
+      ping: Math.round(local.ping || 0)
     }
     sprintStopPending = false
     return rec
@@ -1688,6 +1860,12 @@ async function main() {
     if (local.alive) game.move(local)
   }
 
+  const hurtCam = { time: 0, yaw: 0 }
+  const hurtQa = new THREE.Quaternion()
+  const hurtQz = new THREE.Quaternion()
+  const hurtQb = new THREE.Quaternion()
+  const AXIS_Y = new THREE.Vector3(0, 1, 0)
+  const AXIS_Z = new THREE.Vector3(0, 0, 1)
   const name = (id) => (game.players.get(id) ? game.players.get(id).name : '?')
   const handleEvents = () => {
     for (const ev of game.events) {
@@ -1696,7 +1874,8 @@ async function main() {
       // another while retaining every player action's Minecraft event mapping.
       if (ev.id === local.id) {
         if (ev.type === 'hurt') {
-          hud.flashHurt()
+          hurtCam.time = 10
+          hurtCam.yaw = Number.isFinite(ev.angle) ? ev.angle - (local.yaw * 180) / Math.PI : 0
           playSound('player_hurt', { volume: 0.7 })
         }
         if (ev.type === 'melee_hit') playSound('player_attack', { volume: 0.6 })
@@ -1710,8 +1889,14 @@ async function main() {
         if (ev.type === 'plate_place') playSound('grass_place', { volume: 0.35, pitch: 0.8 })
         if (ev.type === 'launch') playSound('pressure_plate', { volume: 0.3, pitch: 0.75 })
       }
+      if (ev.type === 'hurt' && ev.id !== local.id) {
+        const hm = models.get(ev.id)
+        if (hm) hm.amp = 1.5
+      }
       if (ev.type === 'death') {
-        const line = ev.killer ? `${name(ev.killer)} knocked ${name(ev.victim)} into the void` : `${name(ev.victim)} fell into the void`
+        const victim = ev.victimName ?? name(ev.victim)
+        const killer = ev.killer != null ? ev.killerName ?? name(ev.killer) : null
+        const line = killer ? `\u00a7a${killer}\u00a7f knocked \u00a7c${victim}\u00a7f into the void` : `\u00a7c${victim}\u00a7f fell into the void`
         hud.addFeed(line)
         addChatLine(line)
       }
@@ -1743,8 +1928,19 @@ async function main() {
     ez += camOffset.z
     ey += local.sneaking ? 1.54 : 1.62
     camera.position.set(ex, ey, ez)
-    camera.rotation.y = Math.PI - local.yaw
-    camera.rotation.x = -local.pitch
+    camera.rotation.set(-local.pitch, Math.PI - local.yaw, 0)
+    if (hurtCam.time > 0) {
+      const f0 = (hurtCam.time - alpha) / 10
+      if (f0 > 0) {
+        const f = Math.sin(f0 * f0 * f0 * f0 * Math.PI)
+        const a = (hurtCam.yaw * Math.PI) / 180
+        hurtQa.setFromAxisAngle(AXIS_Y, -a)
+        hurtQz.setFromAxisAngle(AXIS_Z, (f * 14 * Math.PI) / 180)
+        hurtQb.setFromAxisAngle(AXIS_Y, a)
+        camera.quaternion.multiply(hurtQa.multiply(hurtQz).multiply(hurtQb))
+      }
+    }
+    if (tabList.visible) tabList.update([...game.players.values()].map((p) => ({ name: p.name, ping: p === local ? local.ping : p.ping })))
     const fov = settings.fov * lerp(fovModOld, fovMod, alpha)
     if (Math.abs(camera.fov - fov) > 0.01) {
       camera.fov = fov
@@ -1757,6 +1953,7 @@ async function main() {
     if (h) outline.position.set(h.x + 0.5, h.y + 0.5, h.z + 0.5)
     hud.update(local, game)
     renderer.render(scene, camera)
+    billboard.render(camera)
   }
 
   window.game = game
@@ -1783,6 +1980,7 @@ async function main() {
         const selected = C.HOTBAR[local.slot]
         visualBowTicks = selected?.type === 'bow' && local.act.useHeld ? visualBowTicks + 1 : -1
       }
+      if (hurtCam.time > 0) hurtCam.time--
       fovModOld = fovMod
       fovMod += ((local.sprinting ? 1.15 : 1) - fovMod) * 0.5
       handleEvents()
